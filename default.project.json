@@ -1,0 +1,53 @@
+{
+  "name": "space-game",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "Server": {
+        "$path": "src/server"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": {
+          "$path": "src/client"
+        }
+      },
+      "$properties": {
+        "EnableMouseLockOption": false
+      }
+    },
+    "Players": {
+      "$properties": {
+        "CharacterAutoLoads": false
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "Gravity": 0
+      }
+    },
+    "Lighting": {
+      "$properties": {
+        "ClockTime": 0,
+        "Brightness": 1,
+        "Ambient": [
+          0.35,
+          0.35,
+          0.45
+        ],
+        "OutdoorAmbient": [
+          0.35,
+          0.35,
+          0.45
+        ],
+        "GlobalShadows": false
+      }
+    }
+  }
+}

@@ -35,6 +35,10 @@ Missiles are fired with R once the lock completes; point-defense turrets shoot d
 
 **Tuning:** hull stats and stock loadouts are in `src/shared/ShipClasses.lua`; every other balance number is in `src/shared/Config.lua`.
 
+**Ship customization (Shipyard):** in the Hangar, **Customize** opens the Shipyard. Pick a hull on the left (unowned hulls open as a preview with a Buy button), then fit it across four tabs: **Weapons** (each slot takes a gun and a Fixed or Gimbal mount, or a turret, in Mk I to Mk IV), **Systems** (shield generator, the engine on each mount and its thrust from 60 to 120%), **Modules** (armor plates and ammo magazines in the hull's module cells) and **Paint** (hull paint, trim, engine glow, engine trail and finish). The right panel shows reactor load, damage per second, plasma fire rate, shield, hull, armor and handling as you change things, plus anything stopping the ship from flying (reactor overloaded, Kinetic guns without magazines, no engines). Each hull holds 3 saved loadouts; the starred one is what that hull launches with. **Buy missing parts** buys everything the loadout needs that you don't own in one go, and **Launch** saves, sets it active and flies. New pilots start with 25,000 Credits and the Scout and Fighter with their stock fits.
+
+Profiles (Credits, hulls, parts, paint and loadouts) save to a DataStore with session locking, so the same API-access setting above is needed for them to persist in Studio. Without it you still get a working profile that resets each session, and the Shipyard says so. Set `Outfitting.Settings.freeMode = true` in `src/shared/Outfitting.lua` to make everything free for a playtest. Prices, reactor budgets, module cells, shield sizes, engine types and paints are all in that file.
+
 ## Code layout
 
 | Path | What it does |
@@ -57,6 +61,10 @@ Missiles are fired with R once the lock completes; point-defense turrets shoot d
 | `src/shared/ShipCatalog.lua` | The ships listed in the Hangar; a hull appears as launchable once Config has its hull and `Player<Hull>` loadout |
 | `src/shared/Settings.lua` | The settings list, defaults and validation |
 | `src/server/PlayerSettings.lua`, `ShipPreviews.lua` | Saves settings in a DataStore; builds the Hangar's 3D ship previews |
+| `src/shared/Outfitting.lua` | Ship customization rules and data: each hull's slots, reactor and module cells, shields, engines, modules, paints, prices, and turning a saved loadout into stats and a spawnable ship |
+| `src/server/PlayerData.lua` | Saves each player's profile (Credits, hulls, parts, paint, loadouts) in a session-locked DataStore |
+| `src/server/Shipyard.lua` | Server side of the Shipyard: saving loadouts, buying, refitting, launching; every request re-checked |
+| `src/client/Shipyard.lua` | The Shipyard screen, opened from the Hangar's Customize button |
 
 ## Contents
 

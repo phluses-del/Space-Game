@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Outfitting = require(ReplicatedStorage.Shared.Outfitting)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local Ships = require(script.Ships)
 local Combat = require(script.Combat)
@@ -19,11 +20,15 @@ local TestSystem = require(script.TestSystem)
 local PlayerSettings = require(script.PlayerSettings)
 local ShipPreviews = require(script.ShipPreviews)
 local ShipCatalog = require(ReplicatedStorage.Shared.ShipCatalog)
+local PlayerData = require(script.PlayerData)
+local Shipyard = require(script.Shipyard)
 
 workspace.Gravity = 0
 TestSystem.build()
 ShipPreviews.buildAll()
 PlayerSettings.start()
+PlayerData.start()
+Shipyard.start()
 
 for _, spec in Config.TestSystem.drones do
 	Drones.spawn(spec)
@@ -47,11 +52,19 @@ local function setPointer(player: Player, model: Model?)
 	pointer.Parent = player
 end
 
--- Hook for ship customization: which Config loadout to spawn when a player
--- launches shipId (a ShipCatalog id, which is the hull name). Return the
--- player's saved loadout for that hull here once saved loadouts exist.
-local function resolveLoadout(_player: Player, shipId: string)
-	return ShipCatalog.get(shipId).loadout
+-- What to spawn when a player launches shipId (a ShipCatalog id, which is
+-- the hull name): the active saved loadout for that hull from the shipyard,
+-- or the Config loadout for hulls the shipyard doesn't fit yet.
+local function resolveLoadout(player: Player, shipId: string)
+	local entry = ShipCatalog.get(shipId)
+	if Outfitting.hullAvailable(entry.hull) then
+		local loadout, note = Shipyard.loadoutFor(player, entry.hull)
+		if note then
+			Remotes.Notice:FireClient(player, note)
+		end
+		return loadout
+	end
+	return entry.loadout
 end
 
 local function spawnPlayer(player: Player, shipId: string)
@@ -123,6 +136,34 @@ Players.PlayerRemoving:Connect(function(player)
 	end
 end)
 
+-- Launch checks shared by the Hangar's RequestSpawn and the shipyard's
+-- Launch button. Returns ok, reason.
+local function tryLaunch(player: Player, shipId: any): (boolean, string?)
+	if playerShips[player] then
+		return false, "You're already flying" -- already flying
+	end
+	if not (ShipCatalog.isAvailable(shipId) and ShipPreviews.has(shipId)) then
+		return false, "That ship isn't available yet."
+	end
+	local data = PlayerData.waitFor(player)
+	if not data then
+		return false, "Your profile hasn't loaded yet."
+	end
+	local hull = ShipCatalog.get(shipId).hull
+	if Outfitting.hullAvailable(hull) and not data.hulls[hull] then
+		return false, "Buy the " .. hull .. " in the shipyard first."
+	end
+	if workspace:GetServerTimeNow() < (player:GetAttribute("RespawnAt") or 0) then
+		return false, "Your ship is still being rebuilt."
+	end
+	data.lastHull = hull
+	spawnPlayer(player, shipId)
+	if not playerShips[player] then
+		return false, "That ship couldn't launch."
+	end
+	return true
+end
+
 Remotes.RequestSpawn.OnServerEvent:Connect(function(player, shipId)
 	local now = os.clock()
 	if now - (lastSpawnRequest[player] or 0) < Config.Menus.spawnRequestCooldown then
@@ -130,19 +171,14 @@ Remotes.RequestSpawn.OnServerEvent:Connect(function(player, shipId)
 	end
 	lastSpawnRequest[player] = now
 
-	if playerShips[player] then
-		return -- already flying
+	local ok, reason = tryLaunch(player, shipId)
+	if not ok and reason and not playerShips[player] then
+		Remotes.Notice:FireClient(player, reason)
 	end
-	if not (ShipCatalog.isAvailable(shipId) and ShipPreviews.has(shipId)) then
-		Remotes.Notice:FireClient(player, "That ship isn't available yet.")
-		return
-	end
-	if workspace:GetServerTimeNow() < (player:GetAttribute("RespawnAt") or 0) then
-		Remotes.Notice:FireClient(player, "Your ship is still being rebuilt.")
-		return
-	end
-	spawnPlayer(player, shipId)
 end)
+
+-- The shipyard opens from the Hangar, so its Launch button takes the same path.
+Shipyard.setLaunchHandler(tryLaunch)
 
 Remotes.ReturnToHangar.OnServerEvent:Connect(function(player)
 	local ship = playerShips[player]

@@ -17,11 +17,13 @@ local NAMES = {
 	"ReturnToHangar", -- client -> server: dock and leave your ship (refused in combat)
 	"SaveSettings", -- client -> server: (settings table) save menu settings
 	"Notice", -- server -> client: (text) short message for the menus, e.g. why a request was refused
+	"ProfileUpdated", -- server -> client: (profile) Credits, hulls, items, loadouts after any change
 }
 
 -- RemoteFunctions, for requests that need an answer.
 local FUNCTION_NAMES = {
 	"GetSettings", -- client -> server: returns the player's saved settings
+	"ShipyardRequest", -- client -> server: (action, payload) -> { ok, error?, profile, ... }
 }
 
 local Remotes = {}

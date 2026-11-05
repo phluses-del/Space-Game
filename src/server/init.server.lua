@@ -1,7 +1,7 @@
 --[[
 	Server entry point for the flight and combat prototype: builds the test
-	system, spawns drones, gives each player a ship (a Fighter until they pick
-	another class), and runs combat and missiles.
+	system, spawns drones, launches each player's chosen ship when they ask
+	from the Hangar, and runs combat and missiles.
 ]]
 
 local Players = game:GetService("Players")
@@ -16,73 +16,155 @@ local Drones = require(script.Drones)
 local Missiles = require(script.Missiles)
 local DevShipSwitch = require(script.DevShipSwitch)
 local TestSystem = require(script.TestSystem)
+local PlayerSettings = require(script.PlayerSettings)
+local ShipPreviews = require(script.ShipPreviews)
+local ShipCatalog = require(ReplicatedStorage.Shared.ShipCatalog)
 
 workspace.Gravity = 0
 TestSystem.build()
+ShipPreviews.buildAll()
+PlayerSettings.start()
 
 for _, spec in Config.TestSystem.drones do
 	Drones.spawn(spec)
 end
 
 local playerShips = {} -- [Player] = ship
-local playerHull = {} -- [Player] = hull name they fly; respawns use it too
+local chosenShip = {} -- [Player] = ShipCatalog id they last launched, used for respawn
+local lastSpawnRequest = {} -- [Player] = os.clock() of their last RequestSpawn
 
-local function spawnPlayer(player: Player)
-	if not player.Parent or playerShips[player] then
+-- Players start in the menus with no ship. ShipState tells the client which
+-- screen fits: "None" (in the Hangar or main menu), "Flying" or "Destroyed".
+-- RespawnAt is the server time when a destroyed pilot may launch again.
+local function setShipState(player: Player, state: string)
+	player:SetAttribute("ShipState", state)
+end
+
+local function setPointer(player: Player, model: Model?)
+	local pointer = player:FindFirstChild("Ship") or Instance.new("ObjectValue")
+	pointer.Name = "Ship"
+	pointer.Value = model
+	pointer.Parent = player
+end
+
+-- Hook for ship customization: which Config loadout to spawn when a player
+-- launches shipId (a ShipCatalog id, which is the hull name). Return the
+-- player's saved loadout for that hull here once saved loadouts exist.
+local function resolveLoadout(_player: Player, shipId: string)
+	return ShipCatalog.get(shipId).loadout
+end
+
+local function spawnPlayer(player: Player, shipId: string)
+	if not player.Parent then
 		return
 	end
-	local hullName = playerHull[player] or Config.TestSystem.playerHull
-	local hull = Config.Hulls[hullName]
+	local hull = Config.Hulls[ShipCatalog.get(shipId).hull]
 	-- Spread pilots out so they don't spawn inside each other; big hulls
 	-- start further out to the side.
 	local slot = #Players:GetPlayers() - 1
 	local offset = Vector3.new(slot * 25 + (if hull.radius > 10 then hull.radius * 2 + 20 else 0), 0, 0)
 	local spawnAt = Config.TestSystem.playerSpawn + offset
-	local ship = Ships.spawn("Player" .. hullName, CFrame.lookAt(spawnAt, spawnAt + Vector3.new(0, 0, -1)), player)
+	local ok, ship = pcall(Ships.spawn, resolveLoadout(player, shipId), CFrame.lookAt(spawnAt, spawnAt + Vector3.new(0, 0, -1)), player)
+	if not ok then
+		warn(string.format("Could not spawn %s for %s: %s", shipId, player.Name, tostring(ship)))
+		Remotes.Notice:FireClient(player, "That ship couldn't launch. Pick another.")
+		return
+	end
 	playerShips[player] = ship
-
-	local pointer = player:FindFirstChild("Ship") or Instance.new("ObjectValue")
-	pointer.Name = "Ship"
-	pointer.Value = ship.model
-	pointer.Parent = player
+	chosenShip[player] = shipId
+	setPointer(player, ship.model)
 	player.ReplicationFocus = ship.root
+	setShipState(player, "Flying")
+end
+
+local function onPlayerAdded(player: Player)
+	setPointer(player, nil)
+	player:SetAttribute("RespawnAt", 0)
+	setShipState(player, "None")
 end
 
 Ships.onDestroyed(function(ship)
 	local player = ship.owner
 	if player and playerShips[player] == ship then
 		playerShips[player] = nil
-		task.wait(Config.TestSystem.respawnDelay)
-		spawnPlayer(player)
+		player:SetAttribute("RespawnAt", workspace:GetServerTimeNow() + Config.TestSystem.respawnDelay)
+		setPointer(player, nil)
+		setShipState(player, "Destroyed")
 	end
 end)
 
-Players.PlayerAdded:Connect(spawnPlayer)
+Players.PlayerAdded:Connect(onPlayerAdded)
 for _, player in Players:GetPlayers() do
-	task.spawn(spawnPlayer, player)
+	task.spawn(onPlayerAdded, player)
 end
 
--- Swap a player's ship for another class right away and remember the
--- choice for respawns. The hangar menu will be the real way to do this.
+-- Studio-only 1-6 keys: swap the current ship for another class right away.
+-- The Hangar is the real way to change ship.
 local function switchShip(player: Player, hullName: string)
-	playerHull[player] = hullName
+	if not ShipCatalog.isAvailable(hullName) or player:GetAttribute("ShipState") == "Destroyed" then
+		return
+	end
 	local ship = playerShips[player]
 	playerShips[player] = nil
 	if ship then
 		Ships.remove(ship)
 	end
-	spawnPlayer(player)
+	spawnPlayer(player, hullName)
 end
 DevShipSwitch.start(switchShip)
 
 Players.PlayerRemoving:Connect(function(player)
 	local ship = playerShips[player]
 	playerShips[player] = nil
-	playerHull[player] = nil
+	chosenShip[player] = nil
+	lastSpawnRequest[player] = nil
 	if ship then
 		Ships.destroy(ship)
 	end
 end)
+
+Remotes.RequestSpawn.OnServerEvent:Connect(function(player, shipId)
+	local now = os.clock()
+	if now - (lastSpawnRequest[player] or 0) < Config.Menus.spawnRequestCooldown then
+		return
+	end
+	lastSpawnRequest[player] = now
+
+	if playerShips[player] then
+		return -- already flying
+	end
+	if not (ShipCatalog.isAvailable(shipId) and ShipPreviews.has(shipId)) then
+		Remotes.Notice:FireClient(player, "That ship isn't available yet.")
+		return
+	end
+	if workspace:GetServerTimeNow() < (player:GetAttribute("RespawnAt") or 0) then
+		Remotes.Notice:FireClient(player, "Your ship is still being rebuilt.")
+		return
+	end
+	spawnPlayer(player, shipId)
+end)
+
+Remotes.ReturnToHangar.OnServerEvent:Connect(function(player)
+	local ship = playerShips[player]
+	if not ship then
+		return
+	end
+	local sinceHit = workspace:GetServerTimeNow() - (ship.lastDamagedAt or 0)
+	if ship.lastDamagedAt and ship.lastDamagedAt > 0 and sinceHit < Config.Menus.hangarCombatLockout then
+		Remotes.Notice:FireClient(
+			player,
+			string.format("Can't dock in combat. Wait %d s without taking damage.", math.ceil(Config.Menus.hangarCombatLockout - sinceHit))
+		)
+		return
+	end
+	playerShips[player] = nil
+	setPointer(player, nil)
+	setShipState(player, "None")
+	Ships.remove(ship) -- quiet removal: no explosion, no respawn timer
+end)
+
+Remotes.SaveSettings.OnServerEvent:Connect(PlayerSettings.set)
+Remotes.GetSettings.OnServerInvoke = PlayerSettings.get
 
 Remotes.RequestLock.OnServerEvent:Connect(function(player, targetModel)
 	local ship = playerShips[player]

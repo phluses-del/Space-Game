@@ -4,10 +4,10 @@
 
 	PC:      mouse steers (pitch and yaw), W/S thrust, A/D strafe, Space/Ctrl up
 	         and down, Q/E roll, Shift boost, T lock, Tab next target,
-	         G subsystem, X clear lock, R fire missile, F flight assist
+	         G subsystem, X clear lock, R fire missile, F flight assist, P or M pause
 	Gamepad: left stick thrust and strafe, right stick steer, L1/R1 roll,
 	         L2/R2 down and up, B boost, Y lock, D-pad right next target,
-	         X subsystem, A fire missile, D-pad up flight assist
+	         X subsystem, A fire missile, D-pad up flight assist, View/Select pause
 	Touch:   left half of the screen is a thrust stick, drag on the right half
 	         to steer, on-screen buttons for everything else
 ]]
@@ -32,6 +32,19 @@ Input.axes = {
 }
 Input.mouseSteering = false -- true while the mouse is the active steering device
 
+-- False while a menu is open: axes read zero and flight actions are ignored.
+Input.enabled = true
+
+-- Player settings, set by ClientSettings.
+Input.settings = {
+	invertPitch = false,
+	steerSensitivity = 1,
+	mouseDeadzone = Config.Flight.mouseDeadzone,
+}
+
+-- Actions that still work while a menu is open (the pause key closes it).
+local MENU_ACTIONS = { Pause = true }
+
 local held = {}
 local actionCallbacks = {}
 
@@ -43,6 +56,10 @@ local touchSteer = nil
 
 local function onHold(name)
 	return function(_, state)
+		if not Input.enabled then
+			held[name] = false
+			return Enum.ContextActionResult.Pass
+		end
 		held[name] = state == Enum.UserInputState.Begin
 		return Enum.ContextActionResult.Sink
 	end
@@ -50,6 +67,9 @@ end
 
 local function onPress(name)
 	return function(_, state)
+		if not Input.enabled and not MENU_ACTIONS[name] then
+			return Enum.ContextActionResult.Pass
+		end
 		if state == Enum.UserInputState.Begin and actionCallbacks[name] then
 			actionCallbacks[name]()
 		end
@@ -62,16 +82,30 @@ function Input.on(name: string, callback: () -> ())
 	actionCallbacks[name] = callback
 end
 
+local touchButtonNames = {}
+
 local function bindHold(name, title, position, ...)
 	ContextActionService:BindAction(name, onHold(name), true, ...)
+	table.insert(touchButtonNames, name)
 	ContextActionService:SetTitle(name, title)
 	ContextActionService:SetPosition(name, position)
 end
 
 local function bindPress(name, title, position, ...)
 	ContextActionService:BindAction(name, onPress(name), true, ...)
+	table.insert(touchButtonNames, name)
 	ContextActionService:SetTitle(name, title)
 	ContextActionService:SetPosition(name, position)
+end
+
+-- Hides the on-screen touch buttons while a menu is open or there's no ship.
+function Input.setTouchButtonsVisible(visible: boolean)
+	for _, name in touchButtonNames do
+		local button = ContextActionService:GetButton(name)
+		if button then
+			button.Visible = visible
+		end
+	end
 end
 
 function Input.start()
@@ -88,9 +122,13 @@ function Input.start()
 	bindPress("ClearLock", "Unlock", UDim2.new(1, -300, 0, 140), Enum.KeyCode.X, Enum.KeyCode.DPadDown)
 	bindPress("Missile", "Missile", UDim2.new(1, -370, 0, 140), Enum.KeyCode.R, Enum.KeyCode.ButtonA)
 	bindPress("Assist", "Assist", UDim2.new(0, 30, 1, -370), Enum.KeyCode.F, Enum.KeyCode.DPadUp)
+	-- Esc and the gamepad Start button belong to Roblox's own menu, so pause
+	-- uses P, M and the gamepad View/Select button. Touch has its own on-screen
+	-- menu button, drawn by the menus.
+	ContextActionService:BindAction("Pause", onPress("Pause"), false, Enum.KeyCode.P, Enum.KeyCode.M, Enum.KeyCode.ButtonSelect)
 
 	UserInputService.TouchStarted:Connect(function(touch, processed)
-		if processed then
+		if processed or not Input.enabled then
 			return
 		end
 		local position = Vector2.new(touch.Position.X, touch.Position.Y)
@@ -135,6 +173,17 @@ end
 -- Reads every device and updates Input.axes. Call once per frame.
 function Input.update()
 	local axes = Input.axes
+	if not Input.enabled then
+		for name, value in axes do
+			axes[name] = if type(value) == "boolean" then false else 0
+		end
+		table.clear(held)
+		touchThrust = nil
+		touchSteer = nil
+		Input.mouseSteering = false
+		return
+	end
+	local settings = Input.settings
 	local forward = key(Enum.KeyCode.W) - key(Enum.KeyCode.S)
 	local strafe = key(Enum.KeyCode.D) - key(Enum.KeyCode.A)
 	local vertical = (if held.Up then 1 else 0) - (if held.Down then 1 else 0)
@@ -178,8 +227,14 @@ function Input.update()
 		local viewport = workspace.CurrentCamera.ViewportSize
 		local mouse = UserInputService:GetMouseLocation()
 		local offset = (mouse - viewport / 2) / (math.min(viewport.X, viewport.Y) / 2)
-		yaw += deadzone(math.clamp(offset.X, -1, 1), Config.Flight.mouseDeadzone)
-		pitch -= deadzone(math.clamp(offset.Y, -1, 1), Config.Flight.mouseDeadzone)
+		yaw += deadzone(math.clamp(offset.X, -1, 1), settings.mouseDeadzone)
+		pitch -= deadzone(math.clamp(offset.Y, -1, 1), settings.mouseDeadzone)
+	end
+
+	pitch *= settings.steerSensitivity
+	yaw *= settings.steerSensitivity
+	if settings.invertPitch then
+		pitch = -pitch
 	end
 
 	axes.forward = math.clamp(forward, -1, 1)

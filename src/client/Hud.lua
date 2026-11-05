@@ -53,6 +53,8 @@ local ownBars, targetBars = {}, {}
 local gunRows = {}
 local blips = {}
 local alertUntil = 0
+local showHints = true
+local panelScales = {}
 
 local function make(className, props, parent)
 	local instance = Instance.new(className)
@@ -96,6 +98,7 @@ local function panel(props, parent)
 		PaddingRight = UDim.new(0, 10),
 	}, frame)
 	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, frame)
+	table.insert(panelScales, make("UIScale", { Scale = 1 }, frame))
 	return frame
 end
 
@@ -200,7 +203,7 @@ function Hud.start()
 	}, gui)
 
 	hint = label(
-		"Mouse steer · W/S thrust · A/D strafe · Space/Ctrl up/down · Q/E roll · Shift boost · T lock · Tab next · G part · X unlock · R missile · F assist",
+		"Mouse steer · W/S thrust · A/D strafe · Space/Ctrl up/down · Q/E roll · Shift boost · T lock · Tab next · G part · X unlock · R missile · F assist · P menu",
 		{
 			AnchorPoint = Vector2.new(0.5, 1),
 			Position = UDim2.new(0.5, 0, 1, -10),
@@ -211,6 +214,24 @@ function Hud.start()
 		},
 		gui
 	)
+end
+
+-- Hidden while a menu covers the screen.
+function Hud.setVisible(visible: boolean)
+	if gui then
+		gui.Enabled = visible
+	end
+end
+
+-- HUD size setting: scales the info panels, not the lock marker or cursor.
+function Hud.setScale(scale: number)
+	for _, uiScale in panelScales do
+		uiScale.Scale = scale
+	end
+end
+
+function Hud.setHintsVisible(visible: boolean)
+	showHints = visible
 end
 
 function Hud.alert(text: string, color: Color3?)
@@ -379,7 +400,7 @@ function Hud.update(model: Model?)
 		local mouse = UserInputService:GetMouseLocation()
 		cursor.Position = UDim2.fromOffset(mouse.X, mouse.Y)
 	end
-	hint.Visible = not UserInputService.TouchEnabled
+	hint.Visible = showHints and not UserInputService.TouchEnabled
 
 	local alive = model ~= nil and model.PrimaryPart ~= nil and model:IsDescendantOf(workspace)
 	ownPanel.Visible = alive

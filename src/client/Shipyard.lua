@@ -1036,22 +1036,15 @@ local function renderHulls()
 			if not available then
 				return
 			end
-			if own then
-				if draftDirty and hull ~= selectedHull then
-					toast("Unsaved changes to " .. draft.name .. " were dropped", WARN)
-				end
-				selectHull(hull)
-				Shipyard.refresh()
-			else
-				local result = request("BuyHull", hull)
-				if result.ok then
-					toast("Bought the " .. hull .. ", with its stock fit", GOOD)
-					selectHull(hull)
-					Shipyard.refresh()
-				else
-					toast(result.error or "Couldn't buy that", BAD)
-				end
+			if hull == selectedHull then
+				return
 			end
+			if draftDirty then
+				toast("Unsaved changes to " .. draft.name .. " were dropped", WARN)
+			end
+			-- Unowned hulls open as a preview with a Buy button.
+			selectHull(hull)
+			Shipyard.refresh()
 		end)
 		label(hull, { Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 0, 18), Font = FONT_BOLD }, row)
 		local sub, color
@@ -1074,6 +1067,14 @@ local function renderLoadouts()
 	local panel = ui.loadouts
 	clear(panel)
 	local designs = designsFor(selectedHull)
+	if not profile.hulls[selectedHull] then
+		label("Buy this hull to save loadouts for it. You can try fits first.", {
+			TextSize = 12,
+			TextColor3 = FAINT,
+			Size = UDim2.new(1, 0, 0, 32),
+		}, panel)
+		return
+	end
 	for i, design in designs do
 		local isActive = profile.active[selectedHull] == design.id
 		local isEditing = draft.id == design.id
@@ -1151,8 +1152,17 @@ function Shipyard.refresh()
 	ui.refitButton.Visible = missingCost > 0
 	ui.refitButton.Text = "Buy missing parts · " .. credits(missingCost)
 	setEnabled(ui.refitButton, missingCost > 0 and (isFree() or profile.credits >= missingCost))
-	ui.launchButton.Text = if isActive and not draftDirty then "Launch" else "Save, set active and launch"
-	setEnabled(ui.launchButton, #problems == 0 and missingCost == 0)
+	local ownsHull = profile.hulls[draft.hull] == true
+	if ownsHull then
+		ui.launchButton.Text = if isActive and not draftDirty then "Launch" else "Save, set active and launch"
+		setEnabled(ui.launchButton, #problems == 0 and missingCost == 0)
+	else
+		local price = Outfitting.Hulls[draft.hull].price
+		ui.launchButton.Text = "Buy the " .. draft.hull .. " · " .. credits(price)
+		setEnabled(ui.launchButton, isFree() or profile.credits >= price)
+		setEnabled(ui.saveButton, false)
+		ui.refitButton.Visible = false
+	end
 end
 
 -- Saves the draft; returns true on success.
@@ -1363,6 +1373,18 @@ local function build()
 		Font = FONT_BOLD,
 		TextSize = 16,
 	}, actions, function()
+		if not profile.hulls[draft.hull] then
+			local hull = draft.hull
+			local result = request("BuyHull", hull)
+			if result.ok then
+				toast("Bought the " .. hull .. ", with its stock fit", GOOD)
+				selectHull(hull)
+			else
+				toast(result.error or "Couldn't buy that", BAD)
+			end
+			Shipyard.refresh()
+			return
+		end
 		if draftDirty or draft.id == "" or not findDesign(draft.id) then
 			if not saveDraft() then
 				Shipyard.refresh()
@@ -1451,8 +1473,9 @@ function Shipyard.open(hull: string?)
 	end
 	isOpen = true
 	gui.Enabled = true
+	-- An unowned hull opens too, so the player can look it over and buy it.
 	local target = hull or selectedHull or profile.lastHull
-	if not (target and profile.hulls[target] and Outfitting.hullAvailable(target)) then
+	if not (target and Outfitting.hullAvailable(target)) then
 		target = Outfitting.Settings.starterHulls[1]
 	end
 	if target ~= selectedHull or not draft then

@@ -21,10 +21,13 @@ local PlayerData = require(script.Parent.PlayerData)
 
 local Shipyard = {}
 
-local REQUEST_COOLDOWN = 0.15 -- seconds between requests per player
+-- Rate limit per player: a bucket of requests that refills over time, so a
+-- Launch (save, set active, launch) goes through but spam doesn't.
+local REQUEST_BURST = 8
+local REQUEST_REFILL_PER_SECOND = 4
 local MAX_BUY_COUNT = 20
 
-local lastRequest = {} -- [Player] = os.clock()
+local buckets = {} -- [Player] = { tokens, at }
 local launchHandler = nil -- function(player, hull) -> ok, error
 local combatCheck = nil -- function(player) -> seconds since last damage
 
@@ -354,10 +357,14 @@ end
 function Shipyard.start()
 	Remotes.ShipyardRequest.OnServerInvoke = function(player, action, payload)
 		local now = os.clock()
-		if lastRequest[player] and now - lastRequest[player] < REQUEST_COOLDOWN then
+		local bucket = buckets[player] or { tokens = REQUEST_BURST, at = now }
+		buckets[player] = bucket
+		bucket.tokens = math.min(REQUEST_BURST, bucket.tokens + (now - bucket.at) * REQUEST_REFILL_PER_SECOND)
+		bucket.at = now
+		if bucket.tokens < 1 then
 			return { ok = false, error = "Slow down" }
 		end
-		lastRequest[player] = now
+		bucket.tokens -= 1
 
 		local handler = type(action) == "string" and actions[action]
 		if not handler then
@@ -381,7 +388,7 @@ function Shipyard.start()
 	PlayerData.onLoaded(push)
 
 	Players.PlayerRemoving:Connect(function(player)
-		lastRequest[player] = nil
+		buckets[player] = nil
 	end)
 end
 

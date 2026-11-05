@@ -77,7 +77,9 @@ local TURRET = { size = "Any", mounts = { "Turret" } }
 --   built into the hull for now).
 -- moduleCells: interior cells for armor plates, magazines and (later) cargo,
 --   mining and utility modules. The grid editor replaces this list later.
--- price: credits to buy the hull. stock: the free fit a new hull comes with.
+-- price: credits to buy the hull. stock: the free fit a new hull comes with;
+--   guns, missile and armor come from ShipClasses when it has them, and
+--   magazines are added for whatever the stock guns need.
 -- A hull only shows up once Config.Hulls has an entry for it.
 Outfitting.Hulls = {
 	Scout = {
@@ -92,7 +94,6 @@ Outfitting.Hulls = {
 			weapons = { { "PulseBlaster", "Gimbal" }, { "PulseBlaster", "Gimbal" } },
 			shield = "ShieldLight",
 			engine = "Standard",
-			modules = {},
 			cosmetics = { paint = "Azure" },
 		},
 	},
@@ -103,7 +104,7 @@ Outfitting.Hulls = {
 		shieldSize = "Small",
 		engineMounts = 2,
 		moduleCells = 4,
-		reactor = 100,
+		reactor = 110,
 		stock = {
 			weapons = {
 				{ "PulseBlaster", "Gimbal" },
@@ -113,7 +114,6 @@ Outfitting.Hulls = {
 			},
 			shield = "ShieldStandard",
 			engine = "Standard",
-			modules = { "Magazine", "Magazine" },
 			cosmetics = { paint = "Azure" },
 		},
 	},
@@ -129,7 +129,6 @@ Outfitting.Hulls = {
 			weapons = { { "PointDefense", "Turret" } },
 			shield = "ShieldStandard",
 			engine = "Standard",
-			modules = {},
 			cosmetics = { paint = "Ivory" },
 		},
 	},
@@ -140,7 +139,7 @@ Outfitting.Hulls = {
 		shieldSize = "Large",
 		engineMounts = 4,
 		moduleCells = 10,
-		reactor = 340,
+		reactor = 420,
 		stock = {
 			weapons = {
 				{ "PlasmaCannon", "Fixed" },
@@ -152,7 +151,6 @@ Outfitting.Hulls = {
 			},
 			shield = "ShieldStandard",
 			engine = "Standard",
-			modules = { "Magazine", "Magazine", "Magazine", "Magazine" },
 			cosmetics = { paint = "Graphite" },
 		},
 	},
@@ -167,8 +165,7 @@ Outfitting.Hulls = {
 		stock = {
 			weapons = { { "FlakTurret", "Turret" }, { "PointDefense", "Turret" } },
 			shield = "ShieldLight",
-			engine = "HeavyLift",
-			modules = { "Magazine", "Magazine" },
+			engine = "Standard",
 			cosmetics = { paint = "Ember" },
 		},
 	},
@@ -191,7 +188,6 @@ Outfitting.Hulls = {
 			},
 			shield = "ShieldStandard",
 			engine = "Standard",
-			modules = { "Magazine", "Magazine" },
 			cosmetics = { paint = "Graphite" },
 		},
 	},
@@ -377,6 +373,19 @@ local function isMissileWeapon(weapon)
 	return table.find(weaponMounts(weapon), "MissileRack") ~= nil
 end
 
+-- Magazine cells a weapon needs: none for Energy or unlimited-ammo guns (point
+-- defense), one for small guns, two for a Railgun or turret (weapons-and-damage.md).
+function Outfitting.magazineCells(id: string): number
+	local weapon = Config.Weapons[id]
+	if not weapon or not (weapon.ammoShots or weapon.ammoSeconds) then
+		return 0
+	end
+	if weapon.magazineCells then
+		return weapon.magazineCells
+	end
+	return if weapon.size == "Medium" or isTurretWeapon(weapon) then 2 else 1
+end
+
 -- Which category an item id belongs to: "Weapon", "Shield", "Engine", "Module" or nil.
 function Outfitting.category(id: string): string?
 	if Config.Weapons[id] then
@@ -548,6 +557,22 @@ local function tierOrNil(value)
 	return nil
 end
 
+-- The shield whose pool is closest to the hull's "typical fit" shield.
+local function stockShield(hull, fallback)
+	local base = Config.Hulls[hull]
+	if not (base and base.typicalShield) then
+		return fallback
+	end
+	local best, bestGap = fallback, math.huge
+	for _, id in Outfitting.ShieldOrder do
+		local pool = Outfitting.Shields[id].pool[base.size]
+		if pool and math.abs(pool - base.typicalShield) < bestGap then
+			best, bestGap = id, math.abs(pool - base.typicalShield)
+		end
+	end
+	return best
+end
+
 -- The stock design for a hull. Weapons that don't exist in Config.Weapons yet
 -- are left empty so this works before every weapon is built.
 function Outfitting.stockDesign(hull: string)
@@ -555,20 +580,32 @@ function Outfitting.stockDesign(hull: string)
 	assert(def, "No fitting layout for hull " .. tostring(hull))
 	local stock = def.stock
 
+	-- The ship classes own each hull's stock guns, missile and armor
+	-- (Config.Hulls[hull].stock, from ShipClasses); this file's stock list
+	-- is the fallback and supplies the shield, engines and paint.
+	local classStock = Config.Hulls[hull] and Config.Hulls[hull].stock
+	local stockWeapons = stock.weapons
+	if classStock and classStock.guns then
+		stockWeapons = {}
+		for i, gun in classStock.guns do
+			stockWeapons[i] = { gun.weapon, gun.slot }
+		end
+	end
+
 	local design = {
 		id = "",
 		name = "Stock " .. hull,
 		hull = hull,
 		weapons = {},
 		missile = false,
-		shield = { id = stock.shield, tier = 1 },
+		shield = { id = stockShield(hull, stock.shield), tier = 1 },
 		engines = {},
 		modules = {},
 		cosmetics = table.clone(Outfitting.CosmeticDefaults),
 	}
 
 	for i, slot in def.weapons do
-		local fit = stock.weapons[i]
+		local fit = stockWeapons[i]
 		if fit and Outfitting.weaponFits(slot, fit[1], fit[2]) then
 			design.weapons[i] = { id = fit[1], tier = 1, mount = fit[2] }
 		else
@@ -578,23 +615,33 @@ function Outfitting.stockDesign(hull: string)
 	for i = 1, def.engineMounts do
 		design.engines[i] = { id = stock.engine, tier = 1, thrust = 100 }
 	end
-	for i = 1, def.moduleCells do
-		design.modules[i] = stock.modules[i] or false
+	if classStock and classStock.missile and def.missileRack and Config.Weapons[classStock.missile.weapon] then
+		design.missile = { id = classStock.missile.weapon, tier = classStock.missile.tier or 1 }
 	end
 	for slot, id in stock.cosmetics or {} do
 		design.cosmetics[slot] = id
 	end
 
-	-- Drop magazines that feed nothing (a stock weapon may not exist yet).
-	local stats = Outfitting.stats(design)
-	local spare = stats.magazineCells - stats.magazineCellsNeeded
-	for i = #design.modules, 1, -1 do
-		if spare <= 0 then
-			break
+	-- Module cells: exactly the magazines the stock guns need, then armor.
+	for i = 1, def.moduleCells do
+		design.modules[i] = false
+	end
+	local cell = 0
+	for _, fit in design.weapons do
+		if fit then
+			for _ = 1, Outfitting.magazineCells(fit.id) do
+				cell += 1
+				if cell <= def.moduleCells then
+					design.modules[cell] = "Magazine"
+				end
+			end
 		end
-		if design.modules[i] == "Magazine" then
-			design.modules[i] = false
-			spare -= 1
+	end
+	local plates = if classStock then classStock.armorPlates or 0 else 0
+	for _ = 1, plates do
+		cell += 1
+		if cell <= def.moduleCells then
+			design.modules[cell] = "ArmorPlate"
 		end
 	end
 	return design
@@ -711,21 +758,19 @@ local function stockMass(hull)
 	if stockMassCache[hull] then
 		return stockMassCache[hull]
 	end
-	local def = Outfitting.Hulls[hull]
-	local stock = def.stock
+	local design = Outfitting.stockDesign(hull)
 	local mass = 1
-	local shield = Outfitting.Shields[stock.shield]
-	if shield then
-		mass += shield.mass
+	if design.shield then
+		mass += Outfitting.Shields[design.shield.id].mass
 	end
-	local engine = Outfitting.Engines[stock.engine]
-	if engine then
-		mass += engine.mass * def.engineMounts
+	for _, fit in design.engines do
+		if fit then
+			mass += Outfitting.Engines[fit.id].mass
+		end
 	end
-	for _, id in stock.modules do
-		local module = Outfitting.Modules[id]
-		if module then
-			mass += module.mass
+	for _, id in design.modules do
+		if id then
+			mass += Outfitting.Modules[id].mass
 		end
 	end
 	stockMassCache[hull] = mass
@@ -772,11 +817,11 @@ function Outfitting.stats(design)
 			local dps = (weapon.dps or 0) * (Config.TierMultiplier[fit.tier] or 1) * slotScale
 			stats.weaponCount += 1
 			stats.reactorUsed += Outfitting.weaponReactor(fit.id)
+			stats.magazineCellsNeeded += Outfitting.magazineCells(fit.id)
 			if weapon.class == "Energy" then
 				stats.energyDraw += (weapon.powerDraw or 0) * Outfitting.TierScale.energyDraw[fit.tier]
 				stats.dpsEnergy += dps
 			else
-				stats.magazineCellsNeeded += weapon.magazineCells or 1
 				stats.dpsKinetic += dps
 			end
 		end
@@ -959,11 +1004,10 @@ function Outfitting.toSpawnLoadout(design, displayName: string?)
 		if fit then
 			local weapon = Config.Weapons[fit.id]
 			table.insert(guns, { weapon = fit.id, slot = fit.mount, tier = fit.tier, mount = mount })
-			if weapon.class == "Kinetic" then
-				for _ = 1, weapon.magazineCells or 1 do
-					table.insert(magazineFor, #guns)
-				end
+			for _ = 1, Outfitting.magazineCells(fit.id) do
+				table.insert(magazineFor, #guns)
 			end
+			local _ = weapon
 		end
 	end
 

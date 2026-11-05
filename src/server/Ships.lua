@@ -72,7 +72,7 @@ local function recomputePower(ship)
 
 	local draw = 0
 	for _, gun in ship.guns do
-		if gun.weapon.class == "Energy" then
+		if gun.weapon.class == "Energy" and gun.weapon.powerDraw then
 			draw += gun.weapon.powerDraw
 		end
 	end
@@ -82,19 +82,49 @@ local function recomputePower(ship)
 	ship.speedScale = math.max(Config.Flight.minSpeedScale, share)
 end
 
+-- Kinetic guns with limited ammo; point defense fires forever.
+function Ships.usesAmmo(weapon)
+	return weapon.ammoShots ~= nil or weapon.ammoSeconds ~= nil
+end
+
 function Ships.onDestroyed(callback)
 	table.insert(destroyedCallbacks, callback)
 end
 
-function Ships.spawn(loadoutName: string, cframe: CFrame, owner: Player?)
-	local loadout = Config.Loadouts[loadoutName]
-	assert(loadout, "Unknown loadout " .. tostring(loadoutName))
+local function weaponFits(weapon, fit, mount)
+	local mountsOn = weapon.mountsOn or { "Fixed", "Gimbal" }
+	if mount.kind == "Turret" then
+		return table.find(mountsOn, "Turret") ~= nil and fit.slot == "Turret"
+	end
+	-- Forward mounts: the slot must be fixed or gimbal and the gun's size must
+	-- match the mount (small guns on Small mounts, medium on Medium).
+	return table.find(mountsOn, fit.slot) ~= nil and fit.slot ~= "Turret" and weapon.size == mount.kind
+end
+
+-- loadout is a Config.Loadouts name or a loadout table (see Config.Loadouts).
+function Ships.spawn(loadoutOrName: any, cframe: CFrame, owner: Player?)
+	local loadout = loadoutOrName
+	local loadoutName = if type(loadoutOrName) == "string" then loadoutOrName else "Custom"
+	if type(loadoutOrName) == "string" then
+		loadout = Config.Loadouts[loadoutOrName]
+	end
+	assert(type(loadout) == "table", "Unknown loadout " .. tostring(loadoutOrName))
 	local hull = Config.Hulls[loadout.hull]
-	assert(#loadout.guns <= ShipBuilder.mountCount(loadout.hull), loadoutName .. " has more guns than mounts")
+	assert(hull, "Unknown hull " .. tostring(loadout.hull))
+	local mounts = ShipBuilder.mounts(loadout.hull)
+	assert(#loadout.guns <= #mounts, loadoutName .. " has more guns than mounts")
+	for i, fit in loadout.guns do
+		local weapon = Config.Weapons[fit.weapon]
+		assert(weapon, loadoutName .. ": unknown weapon " .. tostring(fit.weapon))
+		if not weaponFits(weapon, fit, mounts[i]) then
+			warn(string.format("%s: %s (%s) doesn't fit %s mount %d", loadoutName, fit.weapon, tostring(fit.slot), mounts[i].kind, i))
+		end
+	end
 
 	nextId += 1
-	local name = if owner then owner.Name else loadout.displayName .. " " .. nextId
-	local model = ShipBuilder.build(loadout.hull, loadout.color, name)
+	local displayName = loadout.displayName or hull.displayName or loadout.hull
+	local name = if owner then owner.Name else displayName .. " " .. nextId
+	local model = ShipBuilder.build(loadout.hull, loadout.color or hull.color, name)
 	model:PivotTo(cframe)
 
 	local plates = loadout.armorPlates or 0
@@ -134,38 +164,81 @@ function Ships.spawn(loadoutName: string, cframe: CFrame, owner: Player?)
 
 	for i, fit in loadout.guns do
 		local weapon = Config.Weapons[fit.weapon]
+		local mount = mounts[i]
 		local gun = {
 			index = i,
 			weaponName = fit.weapon,
 			weapon = weapon,
-			slot = Config.Slots[fit.slot],
+			slot = Config.Slots[fit.slot] or Config.Slots.Fixed,
 			tier = fit.tier or 1,
 			mount = ship.root:FindFirstChild("Gun" .. i),
+			-- Turrets measure their arc from the way the dome faces; forward
+			-- guns from the nose.
+			facing = if mount.kind == "Turret" then (mount.facing or Vector3.yAxis) else nil,
+			antiMissile = weapon.antiMissile == true,
 			timer = 0,
+			heat = 0,
+			overheatedUntil = 0,
 			status = "Idle",
 		}
 		gun.module = addModule(ship, "Weapon", "Weapon" .. i, { gun = gun })
 		ship.guns[i] = gun
 	end
 
-	for cell, gunIndex in loadout.magazineFor do
+	-- Kinetic guns with ammo need a magazine. Older loadouts list them in
+	-- magazineFor; otherwise each such gun gets one.
+	local magazineFor = loadout.magazineFor
+	if not magazineFor then
+		magazineFor = {}
+		for i, gun in ship.guns do
+			if Ships.usesAmmo(gun.weapon) then
+				table.insert(magazineFor, i)
+			end
+		end
+	end
+	for cell, gunIndex in magazineFor do
 		local gun = ship.guns[gunIndex]
 		local weapon = gun.weapon
 		gun.magazine = addModule(ship, "Magazine", "Magazine" .. cell, { feeds = gun })
-		gun.ammo = math.floor(weapon.ammoSeconds / weapon.interval)
+		gun.ammo = weapon.ammoShots or math.floor(weapon.ammoSeconds / weapon.interval)
 		gun.maxAmmo = gun.ammo
+	end
+
+	-- Missile rack: loadout.missile is { weapon, tier } (a bare name works too).
+	local missileFit = loadout.missile
+	if type(missileFit) == "string" then
+		missileFit = { weapon = missileFit, tier = 1 }
+	end
+	if missileFit and ShipBuilder.hasMissileRack(loadout.hull) then
+		local weapon = Config.Weapons[missileFit.weapon]
+		assert(weapon, loadoutName .. ": unknown missile " .. tostring(missileFit.weapon))
+		ship.rack = {
+			weaponName = missileFit.weapon,
+			weapon = weapon,
+			tier = missileFit.tier or 1,
+			ammo = weapon.count,
+			maxAmmo = weapon.count,
+			recharge = 0,
+			attachment = ship.root:FindFirstChild("MissileRack"),
+		}
 	end
 
 	recomputePower(ship)
 
 	model:SetAttribute("ShipId", ship.id)
-	model:SetAttribute("DisplayName", if owner then owner.DisplayName else loadout.displayName)
+	model:SetAttribute("DisplayName", if owner then owner.DisplayName else displayName)
 	model:SetAttribute("Hull", loadout.hull)
+	model:SetAttribute("HullDisplayName", hull.displayName or loadout.hull)
 	model:SetAttribute("IsDrone", owner == nil)
 	model:SetAttribute("GunCount", #ship.guns)
 	for _, gun in ship.guns do
 		model:SetAttribute("Gun" .. gun.index .. "Weapon", gun.weaponName)
 		model:SetAttribute("Gun" .. gun.index .. "Class", gun.weapon.class)
+		model:SetAttribute("Gun" .. gun.index .. "Turret", gun.facing ~= nil)
+	end
+	if ship.rack then
+		model:SetAttribute("MissileWeapon", ship.rack.weaponName)
+		model:SetAttribute("MissileMax", ship.rack.maxAmmo)
 	end
 	if owner then
 		model:SetAttribute("OwnerUserId", owner.UserId)
@@ -206,6 +279,9 @@ function Ships.sync(ship)
 	setAttr(ship, "Subsystem", ship.subsystem or "Hull")
 	setAttr(ship, "LockProgress", if ship.lock then math.floor(ship.lock.progress * 20) / 20 else 0)
 
+	if ship.rack then
+		setAttr(ship, "MissileAmmo", ship.rack.ammo)
+	end
 	for _, gun in ship.guns do
 		setAttr(ship, "Gun" .. gun.index .. "Status", gun.status)
 		if gun.ammo then
@@ -240,6 +316,21 @@ function Ships.destroy(ship)
 	for _, callback in destroyedCallbacks do
 		task.spawn(callback, ship)
 	end
+	ship.model:Destroy()
+end
+
+-- Takes a ship out of the world quietly: no explosion and no destroyed
+-- callbacks (so no respawn). Used when a pilot swaps ships.
+function Ships.remove(ship)
+	if not ship.alive then
+		return
+	end
+	ship.alive = false
+	local index = table.find(Ships.all, ship)
+	if index then
+		table.remove(Ships.all, index)
+	end
+	Ships.byModel[ship.model] = nil
 	ship.model:Destroy()
 end
 
@@ -301,7 +392,9 @@ function Ships.shieldUp(ship)
 end
 
 --[[
-	Pipeline steps 4 to 7. hit = { class = "Energy" | "Kinetic", damage = number }.
+	Pipeline steps 4 to 7. hit = { class = "Energy" | "Kinetic", damage = number,
+	moduleMultiplier = number? } (moduleMultiplier overrides the class default,
+	e.g. 2x for Hull-Cracker missiles).
 	Returns { shield = bool } so Combat can tell clients whether to draw a
 	shield ripple.
 ]]
@@ -335,9 +428,10 @@ function Ships.applyHit(target, attacker, hit)
 		target.lastDamagedAt = t
 
 		-- Step 6: the same hit also damages one module.
-		local multiplier = if hit.class == "Kinetic"
+		local classMultiplier = if hit.class == "Kinetic"
 			then Config.Combat.kineticModuleMultiplier
 			else Config.Combat.energyModuleMultiplier
+		local multiplier = hit.moduleMultiplier or classMultiplier
 		local module = pickModule(target, attacker.subsystem)
 		if module then
 			module.hp -= damage * multiplier

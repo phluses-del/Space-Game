@@ -1,6 +1,7 @@
 --[[
-	Target lock and auto-fire. Every gun ticks on its own fire timer; when the
-	locked target is inside its arc, in range and in line of sight, the server
+	Target lock and auto-fire. Every gun ticks on its own fire timer; when its
+	target (the lock, or for turrets the nearest threat) is inside its arc, in
+	range and in line of sight, the server
 	rolls a hit chance from the gun's tracking speed against how fast the
 	target crosses its view, then hands the damage to Ships.
 
@@ -88,8 +89,11 @@ local function gunStatus(ship, gun, target)
 	if not gun.module.online then
 		return "Offline"
 	end
-	if gun.weapon.class == "Kinetic" and ((gun.ammo or 0) <= 0 or not (gun.magazine and gun.magazine.online)) then
+	if Ships.usesAmmo(gun.weapon) and ((gun.ammo or 0) <= 0 or not (gun.magazine and gun.magazine.online)) then
 		return "NoAmmo"
+	end
+	if gun.overheatedUntil > os.clock() then
+		return "Overheated"
 	end
 	if gun.weapon.class == "Energy" and ship.plasmaRate <= 0 then
 		return "NoPower"
@@ -100,7 +104,8 @@ local function gunStatus(ship, gun, target)
 	local distance = toTarget.Magnitude
 	local direction = toTarget.Unit
 
-	local angle = math.deg(math.acos(math.clamp(ship.root.CFrame.LookVector:Dot(direction), -1, 1)))
+	local axis = if gun.facing then ship.root.CFrame:VectorToWorldSpace(gun.facing) else ship.root.CFrame.LookVector
+	local angle = math.deg(math.acos(math.clamp(axis:Dot(direction), -1, 1)))
 	if angle > gun.slot.arc then
 		return "OutOfArc"
 	end
@@ -158,32 +163,99 @@ local function fireGun(ship, gun, target, effects, dt)
 	})
 end
 
+-- Beam turrets overheat after a few seconds of continuous fire.
+local function updateHeat(gun, dt)
+	local weapon = gun.weapon
+	if not weapon.overheatAfter then
+		return
+	end
+	if gun.status == "Firing" then
+		gun.heat += dt
+		if gun.heat >= weapon.overheatAfter then
+			gun.heat = 0
+			gun.overheatedUntil = os.clock() + weapon.cooldown
+			gun.status = "Overheated"
+		end
+	else
+		gun.heat = math.max(0, gun.heat - dt)
+	end
+end
+
+--[[
+	A turret shoots the pilot's locked target when it can. Otherwise it picks
+	its own: the nearest ship that is locking onto us and that it can hit.
+	That is the "empty turret seat shoots the nearest threat" rule from
+	ship-types.md, and it means turrets never open fire on a bystander.
+]]
+local function turretTarget(ship, gun, lockTarget, threats)
+	if lockTarget and gunStatus(ship, gun, lockTarget) == "Ready" then
+		return lockTarget
+	end
+	local best, bestDistance = nil, math.huge
+	for _, threat in threats or {} do
+		if threat.alive and threat ~= lockTarget then
+			local status, _, _, distance = gunStatus(ship, gun, threat)
+			if status == "Ready" and distance < bestDistance then
+				best, bestDistance = threat, distance
+			end
+		end
+	end
+	return best or lockTarget
+end
+
 function Combat.update(dt)
 	local effects = {}
 
+	-- Who is locking onto whom, so turrets can answer threats.
+	local threats = {}
+	for _, ship in Ships.all do
+		local lock = ship.lock
+		if lock and lock.target.alive then
+			threats[lock.target] = threats[lock.target] or {}
+			table.insert(threats[lock.target], ship)
+		end
+	end
+
 	-- Copy the list: a ship destroyed mid-loop is removed from Ships.all.
 	for _, ship in table.clone(Ships.all) do
+		if not ship.alive then
+			continue
+		end
+
+		local lockTarget = nil
 		local lock = ship.lock
-		if not ship.alive or not lock then
-			continue
-		end
-
-		local target = lock.target
-		if not target.alive or (target.root.Position - ship.root.Position).Magnitude > Config.LockRange then
-			Combat.clearLock(ship)
-			continue
-		end
-
-		if not lock.locked then
-			lock.progress = math.min(1, lock.progress + dt / ship.hull.lockTime)
-			lock.locked = lock.progress >= 1
-			continue
+		if lock then
+			local target = lock.target
+			if not target.alive or (target.root.Position - ship.root.Position).Magnitude > Config.LockRange then
+				Combat.clearLock(ship)
+			elseif not lock.locked then
+				lock.progress = math.min(1, lock.progress + dt / ship.hull.lockTime)
+				lock.locked = lock.progress >= 1
+			else
+				lockTarget = target
+			end
 		end
 
 		for _, gun in ship.guns do
-			if ship.alive and target.alive then
-				fireGun(ship, gun, target, effects, dt)
+			if not ship.alive then
+				break
 			end
+			-- Point defense only shoots missiles; Missiles runs it.
+			if gun.antiMissile then
+				continue
+			end
+
+			local target = lockTarget
+			if gun.facing then
+				target = turretTarget(ship, gun, lockTarget, threats[ship])
+			end
+
+			if target and target.alive then
+				fireGun(ship, gun, target, effects, dt)
+			else
+				gun.status = if gun.overheatedUntil > os.clock() then "Overheated" else "Idle"
+			end
+			updateHeat(gun, dt)
 		end
 	end
 

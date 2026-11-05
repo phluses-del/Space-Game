@@ -95,6 +95,27 @@ local function spark(position, color)
 end
 
 local function onShot(shot)
+	-- A missile reaching its target: ripple if the shield took it, sparks if not.
+	if shot.impact then
+		local target = shot.target
+		if shot.shield and target and target.PrimaryPart then
+			shieldRipple(target, shot.class)
+		end
+		if not shot.shield or shot.class == "Kinetic" then
+			spark(shot.position, if shot.class == "Energy" then ENERGY else KINETIC)
+		end
+		return
+	end
+
+	-- Point defense firing at a missile: a tracer to where the missile is.
+	if shot.position and shot.shooter and shot.shooter.PrimaryPart then
+		local mount = shot.shooter.PrimaryPart:FindFirstChild("Gun" .. shot.gun)
+		local from = if mount then mount.WorldPosition else shot.shooter.PrimaryPart.Position
+		local to = shot.position + (if shot.hit then Vector3.zero else random:NextUnitVector() * 4)
+		tracer(from, to, "Kinetic", shot.gun)
+		return
+	end
+
 	local shooter, gunIndex, target = shot.shooter, shot.gun, shot.target
 	local hit, class, shield = shot.hit, shot.class, shot.shield
 	if not (shooter and target and shooter.PrimaryPart and target.PrimaryPart) then
@@ -188,6 +209,16 @@ function Effects.start()
 		elseif kind == "Destroyed" then
 			local position, radius = ...
 			explosion(position, radius)
+		elseif kind == "MissileBurst" then
+			local position, size = ...
+			for _ = 1, 5 do
+				local p = effectPart({
+					Size = Vector3.one * size * 0.4,
+					CFrame = CFrame.new(position),
+					Color = Color3.fromRGB(255, 170, 70),
+				})
+				fade(p, 0.35, { Size = Vector3.one * size, CFrame = CFrame.new(position + random:NextUnitVector() * size) })
+			end
 		end
 		for _, callback in shipEventListeners do
 			callback(kind, ...)

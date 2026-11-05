@@ -3,11 +3,22 @@
 	it, smoothed so fast turns don't jerk the view.
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
 local Flight = require(script.Parent.Flight)
 
 local ChaseCamera = {}
 
-local OFFSET = CFrame.new(0, 7, 26) * CFrame.Angles(math.rad(-8), 0, 0)
+-- Tuned for the Fighter (radius 7); bigger hulls pull the camera back in
+-- proportion so the whole ship stays in view.
+local BASE_RADIUS = 7
+
+local function offsetFor(model: Model)
+	local hull = Config.Hulls[model:GetAttribute("Hull")]
+	local scale = math.max(0.85, (if hull then hull.radius else BASE_RADIUS) / BASE_RADIUS)
+	return CFrame.new(0, 7 * scale, 26 * scale) * CFrame.Angles(math.rad(-8), 0, 0)
+end
 local STIFFNESS = 10
 local BASE_FOV = 70
 local BOOST_FOV = 85
@@ -19,7 +30,7 @@ function ChaseCamera.update(dt: number, model: Model?)
 		return
 	end
 
-	local target = model.PrimaryPart.CFrame * OFFSET
+	local target = model.PrimaryPart.CFrame * offsetFor(model)
 	local alpha = 1 - math.exp(-STIFFNESS * dt)
 	camera.CFrame = camera.CFrame:Lerp(target, alpha)
 
@@ -30,7 +41,7 @@ end
 -- Snap straight to the ship, used on spawn.
 function ChaseCamera.snap(model: Model?)
 	if model and model.PrimaryPart then
-		workspace.CurrentCamera.CFrame = model.PrimaryPart.CFrame * OFFSET
+		workspace.CurrentCamera.CFrame = model.PrimaryPart.CFrame * offsetFor(model)
 	end
 end
 

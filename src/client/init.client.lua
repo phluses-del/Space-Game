@@ -6,7 +6,11 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local ChaseCamera = require(script.ChaseCamera)
+local DevShipPicker = require(script.DevShipPicker)
 local Effects = require(script.Effects)
 local Flight = require(script.Flight)
 local Hud = require(script.Hud)
@@ -48,6 +52,11 @@ Input.on("NextTarget", function()
 end)
 Input.on("ClearLock", Targeting.clear)
 Input.on("Subsystem", Targeting.cycleSubsystem)
+Input.on("Missile", function()
+	if ship and ship:GetAttribute("MissileWeapon") then
+		Remotes.FireMissile:FireServer()
+	end
+end)
 Input.on("Assist", function()
 	Flight.toggleAssist()
 	Hud.alert("Flight assist " .. (if Flight.assist then "on" else "off"))
@@ -56,9 +65,14 @@ end)
 Hud.start()
 Effects.start()
 Input.start()
+task.spawn(DevShipPicker.start, function(hullName)
+	Hud.alert("Switching to " .. hullName)
+end)
 
 Effects.onShipEvent(function(kind, model, moduleName)
-	if kind == "ShieldDown" and model then
+	if kind == "Notice" then
+		Hud.alert(model, Color3.fromRGB(255, 220, 120)) -- model is the notice text here
+	elseif kind == "ShieldDown" and model then
 		if model == ship then
 			Hud.alert("Your shield is down", Color3.fromRGB(255, 120, 120))
 		elseif model == currentTarget() then

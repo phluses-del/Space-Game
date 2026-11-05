@@ -5,6 +5,8 @@
 	given in the docs and is a first guess.
 ]]
 
+local ShipClasses = require(script.Parent.ShipClasses)
+
 local Config = {}
 
 --------------------------------------------------------------------------------
@@ -32,33 +34,10 @@ Config.Flight = {
 -- Hulls (ship-types.md)
 --------------------------------------------------------------------------------
 
--- size feeds the hit-chance size ratio and module HP lookups.
--- turnRate is pitch and yaw in degrees per second; rollRate is placeholder.
--- strafeSpeed and accel are placeholders (studs per second, studs per second squared).
-Config.Hulls = {
-	Scout = {
-		size = "Small",
-		hullHP = 700,
-		topSpeed = 220,
-		strafeSpeed = 140,
-		accel = 160,
-		turnRate = 90,
-		rollRate = 150,
-		lockTime = 1.6, -- Scouts lock faster than the 2 s small-ship default
-		radius = 6, -- rough size for line-of-sight and effects
-	},
-	Fighter = {
-		size = "Small",
-		hullHP = 1400,
-		topSpeed = 180,
-		strafeSpeed = 120,
-		accel = 130,
-		turnRate = 80,
-		rollRate = 140,
-		lockTime = 2,
-		radius = 7,
-	},
-}
+-- Every hull's stats live in ShipClasses (one entry per class from
+-- ship-types.md). Config.Hulls is the same table, so Config.Hulls.Frigate.topSpeed
+-- and ShipClasses.classes.Frigate.topSpeed are one value.
+Config.Hulls = ShipClasses.classes
 
 Config.SizeRank = {
 	Small = 1,
@@ -99,11 +78,17 @@ Config.Tracking = {
 }
 
 -- dps is damage per second at full fire rate; interval is seconds between
--- shots (placeholder), so damage per shot is dps * interval.
+-- shots, so damage per shot is dps * interval.
 -- Energy: optimal is where full damage ends, falling to 50% at range.
--- Kinetic: flat damage to range, ammoSeconds of fire per magazine cell.
+-- Kinetic: flat damage to range. Ammo is ammoSeconds of fire or ammoShots,
+-- carried in a magazine module the ship gets for each Kinetic gun.
+-- size feeds the hit-chance size ratio (big guns miss small ships).
+-- mountsOn lists the slot types a weapon fits; default is { "Fixed", "Gimbal" }.
+-- Small guns fit Small mounts and medium guns fit Medium mounts (ShipBuilder).
 Config.Weapons = {
+	-- Small fixed or gimbal
 	PulseBlaster = {
+		displayName = "Pulse Blaster",
 		class = "Energy",
 		size = "Small",
 		dps = 20,
@@ -114,14 +99,103 @@ Config.Weapons = {
 		powerDraw = 60,
 	},
 	Autocannon = {
+		displayName = "Autocannon",
 		class = "Kinetic",
 		size = "Small",
 		dps = 12,
 		interval = 0.2,
 		range = 700,
 		tracking = "Fast",
-		magazineCells = 1,
 		ammoSeconds = 90,
+	},
+
+	-- Medium fixed (Frigate)
+	PlasmaCannon = {
+		displayName = "Plasma Cannon",
+		class = "Energy",
+		size = "Medium",
+		dps = 45,
+		interval = 1.5, -- 68 per bolt
+		optimal = 250,
+		range = 500,
+		tracking = "Slow",
+		powerDraw = 120,
+	},
+	Railgun = {
+		displayName = "Railgun",
+		class = "Kinetic",
+		size = "Medium",
+		dps = 30,
+		interval = 4, -- 120 per shot
+		range = 1800,
+		tracking = "VerySlow",
+		ammoShots = 20,
+	},
+
+	-- Turrets
+	BeamTurret = {
+		displayName = "Beam Turret",
+		class = "Energy",
+		size = "Medium",
+		mountsOn = { "Turret" },
+		dps = 30,
+		interval = 0.2,
+		optimal = 200,
+		range = 400,
+		tracking = "Medium",
+		powerDraw = 90,
+		overheatAfter = 8, -- seconds of continuous fire
+		cooldown = 4, -- seconds locked out once overheated (placeholder)
+	},
+	FlakTurret = {
+		displayName = "Flak Turret",
+		class = "Kinetic",
+		size = "Small", -- "good against small ships", so no size penalty
+		mountsOn = { "Turret" },
+		dps = 18,
+		interval = 0.15,
+		range = 800,
+		tracking = "Fast",
+		ammoSeconds = 90,
+	},
+	PointDefense = {
+		displayName = "Point Defense",
+		class = "Kinetic",
+		size = "Small",
+		mountsOn = { "Turret" },
+		antiMissile = true, -- never shoots ships, only missiles and torpedoes
+		dps = 0,
+		interval = 0.1,
+		range = 300,
+		tracking = "VeryFast",
+		missileHitChance = 0.12, -- per shot (placeholder)
+	},
+
+	-- Missile racks: pilot-fired with the Missile button, limited ammo,
+	-- can be shot down by point defense.
+	PlasmaTorpedo = {
+		displayName = "Plasma Torpedo",
+		class = "Energy",
+		size = "Small",
+		mountsOn = { "MissileRack" },
+		damage = 400,
+		count = 4,
+		range = 600,
+		speed = 200, -- studs per second (placeholder)
+		turnRate = 120, -- homing, degrees per second (placeholder)
+		rechargeTime = 20, -- seconds per torpedo, slower when plasma fire rate is below 100%
+	},
+	HullCracker = {
+		displayName = "Hull-Cracker Missile",
+		class = "Kinetic",
+		size = "Small",
+		mountsOn = { "MissileRack" },
+		damage = 250,
+		count = 4,
+		range = 1200,
+		speed = 280, -- placeholder
+		turnRate = 150, -- placeholder
+		moduleMultiplier = 2,
 	},
 }
 
@@ -149,7 +223,7 @@ Config.Defense = {
 
 	armorReductionPerPlate = 0.125,
 	armorReductionCap = 0.5,
-	armorHPPerPlate = { Small = 200, Medium = 300, Large = 400 },
+	armorHPPerPlate = { Small = 200, Medium = 300, Large = 400, Capital = 400 }, -- Capital not in the docs
 
 	magazineCookoffDamage = 150, -- to the hull and to one other module
 }
@@ -170,13 +244,21 @@ Config.ModuleHP = {
 
 -- Shield generators: pool size is the "typical fit" shield from ship-types.md.
 Config.ShieldGenerators = {
-	ShieldS_Scout = { shieldHP = 400 },
-	ShieldS_Fighter = { shieldHP = 800 },
+	ShieldS_Scout = { size = "Small", shieldHP = 400 },
+	ShieldS_Fighter = { size = "Small", shieldHP = 800 },
+	Shield_Hauler = { size = "Medium", shieldHP = 1200 },
+	Shield_Frigate = { size = "Large", shieldHP = 3000 },
+	Shield_Industrial = { size = "Large", shieldHP = 2500 },
+	Shield_Carrier = { size = "Capital", shieldHP = 8000 },
 }
 
 -- Engines: output is power units for plasma fire rate.
+-- Mk I Standard output by mount size (ship-types.md, "Engine output").
 Config.Engines = {
-	StandardS = { output = 100 },
+	StandardS = { size = "Small", output = 100 },
+	StandardM = { size = "Medium", output = 200 },
+	StandardL = { size = "Large", output = 350 },
+	StandardC = { size = "Capital", output = 600 },
 }
 
 --------------------------------------------------------------------------------
@@ -184,24 +266,11 @@ Config.Engines = {
 --------------------------------------------------------------------------------
 
 -- guns map to the hull's weapon mounts in order (see ShipBuilder).
--- magazineFor lists, per magazine cell, which gun index it feeds.
+-- missile is { weapon, tier } for hulls with a missile rack.
+-- Kinetic guns get one magazine module each unless magazineFor lists, per
+-- magazine cell, which gun index it feeds.
+-- Player<Hull> stock loadouts for every class are added from ShipClasses below.
 Config.Loadouts = {
-	PlayerFighter = {
-		hull = "Fighter",
-		displayName = "Fighter",
-		guns = {
-			{ weapon = "PulseBlaster", slot = "Gimbal", tier = 1 },
-			{ weapon = "PulseBlaster", slot = "Gimbal", tier = 1 },
-			{ weapon = "Autocannon", slot = "Gimbal", tier = 1 },
-			{ weapon = "Autocannon", slot = "Gimbal", tier = 1 },
-		},
-		shield = "ShieldS_Fighter",
-		engines = { "StandardS", "StandardS" },
-		armorPlates = 0,
-		magazineFor = { 3, 4 },
-		color = Color3.fromRGB(70, 140, 220),
-	},
-
 	DroneScout = {
 		hull = "Scout",
 		displayName = "Pirate Drone",
@@ -228,7 +297,18 @@ Config.Loadouts = {
 		color = Color3.fromRGB(200, 140, 50),
 	},
 
-	-- Does not move or shoot; for checking damage numbers.
+	-- Do not move or shoot; for checking damage numbers.
+	FrigateDummy = {
+		hull = "Frigate",
+		displayName = "Frigate Hulk",
+		guns = {},
+		shield = "Shield_Frigate",
+		engines = { "StandardL", "StandardL", "StandardL", "StandardL" },
+		armorPlates = 0,
+		magazineFor = {},
+		color = Color3.fromRGB(110, 110, 110),
+	},
+
 	TargetDummy = {
 		hull = "Fighter",
 		displayName = "Target Dummy",
@@ -241,6 +321,10 @@ Config.Loadouts = {
 	},
 }
 
+for _, hullName in ShipClasses.order do
+	Config.Loadouts["Player" .. hullName] = ShipClasses.stockLoadout(hullName)
+end
+
 --------------------------------------------------------------------------------
 -- Test system
 --------------------------------------------------------------------------------
@@ -251,6 +335,7 @@ Config.TestSystem = {
 	asteroidFieldRadius = 1400,
 	asteroidSize = { 20, 90 },
 	playerSpawn = Vector3.new(0, 0, 600),
+	playerHull = "Fighter", -- what a new player spawns in until they pick another
 	respawnDelay = 5,
 
 	-- Drones: loadout, where they start, and how they behave.
@@ -259,6 +344,7 @@ Config.TestSystem = {
 		{ loadout = "DroneScout", position = Vector3.new(300, 80, -200), ai = "Hunt" },
 		{ loadout = "DroneScout", position = Vector3.new(-350, -60, -300), ai = "Hunt" },
 		{ loadout = "DroneArmored", position = Vector3.new(0, 150, -700), ai = "Hunt" },
+		{ loadout = "FrigateDummy", position = Vector3.new(-500, 40, 450), ai = "Idle" },
 	},
 
 	droneAggroRange = 700, -- spawn is just outside this, so you get a moment before drones engage

@@ -10,8 +10,9 @@ local NAMES = {
 	"RequestLock", -- client -> server: (targetModel) start locking a ship
 	"ClearLock", -- client -> server: drop the current lock
 	"CycleSubsystem", -- client -> server: hull, shield generator, engines, weapons
+	"FireMissile", -- client -> server: launch a missile at the locked target
 	"CombatEffects", -- server -> clients: list of shots this frame, for tracers
-	"ShipEvent", -- server -> clients: (kind, ...) shield down, knock-outs, destruction
+	"ShipEvent", -- server -> clients: (kind, ...) shield down, knock-outs, destruction, missile bursts, notices
 }
 
 local Remotes = {}

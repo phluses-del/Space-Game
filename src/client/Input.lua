@@ -4,10 +4,10 @@
 
 	PC:      mouse steers (pitch and yaw), W/S thrust, A/D strafe, Space/Ctrl up
 	         and down, Q/E roll, Shift boost, T lock, Tab next target,
-	         G subsystem, X clear lock, F flight assist
+	         G subsystem, X clear lock, R fire missile, F flight assist
 	Gamepad: left stick thrust and strafe, right stick steer, L1/R1 roll,
 	         L2/R2 down and up, B boost, Y lock, D-pad right next target,
-	         X subsystem, D-pad up flight assist
+	         X subsystem, A fire missile, D-pad up flight assist
 	Touch:   left half of the screen is a thrust stick, drag on the right half
 	         to steer, on-screen buttons for everything else
 ]]
@@ -86,6 +86,7 @@ function Input.start()
 	bindPress("NextTarget", "Next", UDim2.new(1, -160, 0, 140), Enum.KeyCode.Tab, Enum.KeyCode.DPadRight)
 	bindPress("Subsystem", "Part", UDim2.new(1, -230, 0, 140), Enum.KeyCode.G, Enum.KeyCode.ButtonX)
 	bindPress("ClearLock", "Unlock", UDim2.new(1, -300, 0, 140), Enum.KeyCode.X, Enum.KeyCode.DPadDown)
+	bindPress("Missile", "Missile", UDim2.new(1, -370, 0, 140), Enum.KeyCode.R, Enum.KeyCode.ButtonA)
 	bindPress("Assist", "Assist", UDim2.new(0, 30, 1, -370), Enum.KeyCode.F, Enum.KeyCode.DPadUp)
 
 	UserInputService.TouchStarted:Connect(function(touch, processed)

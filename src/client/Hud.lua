@@ -8,6 +8,9 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
 local Flight = require(script.Parent.Flight)
 local Input = require(script.Parent.Input)
 
@@ -30,12 +33,13 @@ local GUN_STATUS_TEXT = {
 	NoAmmo = { "no ammo", LOCKED },
 	NoPower = { "no power", LOCKED },
 	Offline = { "knocked out", LOCKED },
+	Overheated = { "overheated", LOCKED },
 }
 
-local WEAPON_NAMES = {
-	PulseBlaster = "Pulse Blaster",
-	Autocannon = "Autocannon",
-}
+local function weaponName(name)
+	local weapon = name and Config.Weapons[name]
+	return if weapon then weapon.displayName or name else name or "?"
+end
 
 local SUBSYSTEM_NAMES = {
 	Hull = "Hull",
@@ -44,7 +48,7 @@ local SUBSYSTEM_NAMES = {
 	Weapon = "Weapons",
 }
 
-local gui, ownPanel, targetPanel, gunList, lockMarker, cursor, alertLabel, hint
+local gui, ownPanel, targetPanel, gunList, missileRow, lockMarker, cursor, alertLabel, hint
 local ownBars, targetBars = {}, {}
 local gunRows = {}
 local blips = {}
@@ -131,7 +135,8 @@ function Hud.start()
 	local player = Players.LocalPlayer
 	gui = make("ScreenGui", { Name = "FlightHud", ResetOnSpawn = false, IgnoreGuiInset = true }, player:WaitForChild("PlayerGui"))
 
-	ownPanel = panel({ Position = UDim2.fromOffset(16, 56), Size = UDim2.fromOffset(240, 120) }, gui)
+	ownPanel = panel({ Position = UDim2.fromOffset(16, 56), Size = UDim2.fromOffset(240, 142) }, gui)
+	ownBars.class = label("", { LayoutOrder = 0, TextSize = 16 }, ownPanel)
 	ownBars.shield = bar("Shield", SHIELD, ownPanel, 1)
 	ownBars.hull = bar("Hull", HULL, ownPanel, 2)
 	ownBars.speed = label("", { LayoutOrder = 3 }, ownPanel)
@@ -141,7 +146,7 @@ function Hud.start()
 	gunList = panel({
 		AnchorPoint = Vector2.new(0, 1),
 		Position = UDim2.new(0, 16, 1, -16),
-		Size = UDim2.fromOffset(240, 110),
+		Size = UDim2.fromOffset(260, 110),
 	}, gui)
 
 	targetPanel = panel({
@@ -195,7 +200,7 @@ function Hud.start()
 	}, gui)
 
 	hint = label(
-		"Mouse steer · W/S thrust · A/D strafe · Space/Ctrl up/down · Q/E roll · Shift boost · T lock · Tab next · G part · X unlock · F assist",
+		"Mouse steer · W/S thrust · A/D strafe · Space/Ctrl up/down · Q/E roll · Shift boost · T lock · Tab next · G part · X unlock · R missile · F assist",
 		{
 			AnchorPoint = Vector2.new(0.5, 1),
 			Position = UDim2.new(0.5, 0, 1, -10),
@@ -223,7 +228,15 @@ local function rebuildGunRows(model)
 	for i = 1, model:GetAttribute("GunCount") or 0 do
 		gunRows[i] = label("", { LayoutOrder = i, TextSize = 13 }, gunList)
 	end
-	gunList.Size = UDim2.fromOffset(240, 20 + #gunRows * 22)
+	if missileRow then
+		missileRow:Destroy()
+		missileRow = nil
+	end
+	if model:GetAttribute("MissileWeapon") then
+		missileRow = label("", { LayoutOrder = 100, TextSize = 13 }, gunList)
+	end
+	local rows = #gunRows + (if missileRow then 1 else 0)
+	gunList.Size = UDim2.fromOffset(260, 20 + math.max(rows, 1) * 22)
 end
 
 function Hud.setShip(model: Model?)
@@ -233,6 +246,7 @@ function Hud.setShip(model: Model?)
 end
 
 local function updateOwn(model)
+	ownBars.class.Text = model:GetAttribute("HullDisplayName") or model:GetAttribute("Hull") or ""
 	setBar(ownBars.shield, model:GetAttribute("ShieldHP") or 0, model:GetAttribute("MaxShieldHP"))
 	setBar(ownBars.hull, model:GetAttribute("HullHP") or 0, model:GetAttribute("MaxHullHP"))
 	ownBars.speed.Text = string.format("Speed %.0f%s", Flight.speed, if Flight.boosting then "  BOOST" else "")
@@ -244,13 +258,27 @@ local function updateOwn(model)
 		local status = GUN_STATUS_TEXT[model:GetAttribute("Gun" .. i .. "Status") or "Idle"] or GUN_STATUS_TEXT.Idle
 		local ammo = model:GetAttribute("Gun" .. i .. "Ammo")
 		row.Text = string.format(
-			"%.0f  %s  %s%s",
+			"%.0f  %s%s  %s%s",
 			i,
-			WEAPON_NAMES[weapon] or weapon or "?",
+			weaponName(weapon),
+			if model:GetAttribute("Gun" .. i .. "Turret") then " (turret)" else "",
 			status[1],
 			if ammo then string.format("  (%.0f)", ammo) else ""
 		)
 		row.TextColor3 = status[2]
+	end
+
+	if missileRow then
+		local ammo = model:GetAttribute("MissileAmmo") or 0
+		local locked = (model:GetAttribute("LockProgress") or 0) >= 1
+		missileRow.Text = string.format(
+			"R  %s  %.0f / %.0f%s",
+			weaponName(model:GetAttribute("MissileWeapon")),
+			ammo,
+			model:GetAttribute("MissileMax") or 0,
+			if ammo > 0 and locked then "  ready" else ""
+		)
+		missileRow.TextColor3 = if ammo > 0 and locked then GUN_STATUS_TEXT.Firing[2] elseif ammo > 0 then DIM else LOCKED
 	end
 end
 

@@ -13,6 +13,15 @@ local NAMES = {
 	"FireMissile", -- client -> server: launch a missile at the locked target
 	"CombatEffects", -- server -> clients: list of shots this frame, for tracers
 	"ShipEvent", -- server -> clients: (kind, ...) shield down, knock-outs, destruction, missile bursts, notices
+	"RequestSpawn", -- client -> server: (shipId) launch from the Hangar or respawn
+	"ReturnToHangar", -- client -> server: dock and leave your ship (refused in combat)
+	"SaveSettings", -- client -> server: (settings table) save menu settings
+	"Notice", -- server -> client: (text) short message for the menus, e.g. why a request was refused
+}
+
+-- RemoteFunctions, for requests that need an answer.
+local FUNCTION_NAMES = {
+	"GetSettings", -- client -> server: returns the player's saved settings
 }
 
 local Remotes = {}
@@ -26,10 +35,19 @@ if RunService:IsServer() then
 		remote.Parent = folder
 		Remotes[name] = remote
 	end
+	for _, name in FUNCTION_NAMES do
+		local remote = Instance.new("RemoteFunction")
+		remote.Name = name
+		remote.Parent = folder
+		Remotes[name] = remote
+	end
 	folder.Parent = ReplicatedStorage
 else
 	local folder = ReplicatedStorage:WaitForChild("Remotes")
 	for _, name in NAMES do
+		Remotes[name] = folder:WaitForChild(name)
+	end
+	for _, name in FUNCTION_NAMES do
 		Remotes[name] = folder:WaitForChild(name)
 	end
 end

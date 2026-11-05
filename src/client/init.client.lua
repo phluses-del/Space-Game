@@ -1,5 +1,6 @@
 --[[
-	Client entry point: finds the pilot's ship, then each frame reads input,
+	Client entry point: starts the menus (main menu, Hangar, pause, settings),
+	follows the pilot's ship once it launches, then each frame reads input,
 	flies the ship, moves the camera and refreshes the HUD.
 ]]
 
@@ -11,10 +12,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local ChaseCamera = require(script.ChaseCamera)
 local DevShipPicker = require(script.DevShipPicker)
+local ClientSettings = require(script.ClientSettings)
 local Effects = require(script.Effects)
 local Flight = require(script.Flight)
 local Hud = require(script.Hud)
 local Input = require(script.Input)
+local Menus = require(script.Menus)
 local Targeting = require(script.Targeting)
 
 local player = Players.LocalPlayer
@@ -37,6 +40,10 @@ local function setShip(model: Model?)
 	Flight.setShip(model)
 	Hud.setShip(model)
 	ChaseCamera.snap(model)
+	if model then
+		ClientSettings.applyLaunch()
+	end
+	Menus.setShip(model)
 end
 
 local function currentTarget()
@@ -68,6 +75,15 @@ Input.start()
 task.spawn(DevShipPicker.start, function(hullName)
 	Hud.alert("Switching to " .. hullName)
 end)
+ClientSettings.start()
+
+Menus.registerScreen("MainMenu", require(script.Menus.MainMenu))
+Menus.registerScreen("Hangar", require(script.Menus.Hangar))
+Menus.registerScreen("Pause", require(script.Menus.PauseMenu))
+Menus.registerScreen("Settings", require(script.Menus.SettingsMenu))
+Menus.registerScreen("Controls", require(script.Menus.ControlsMenu))
+Menus.registerScreen("Destroyed", require(script.Menus.DestroyedScreen))
+Menus.start()
 
 Effects.onShipEvent(function(kind, model, moduleName)
 	if kind == "Notice" then
@@ -113,5 +129,6 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 	Flight.update(dt, Input.axes)
 	ChaseCamera.update(dt, ship)
+	Menus.update(dt)
 	Hud.update(ship)
 end)

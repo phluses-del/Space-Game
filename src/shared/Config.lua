@@ -353,4 +353,18 @@ Config.TestSystem = {
 	droneDamageScale = 0.5, -- drones hit half as hard as players for now
 }
 
+--------------------------------------------------------------------------------
+-- Menus
+--------------------------------------------------------------------------------
+
+Config.Menus = {
+	gameTitle = "OUTER REACH", -- working title; the design doc's shortlist is still open
+	buildLabel = "Prototype build",
+
+	-- Seconds after taking damage before a pilot may dock back to the Hangar,
+	-- so the menu can't be used to escape a fight (placeholder).
+	hangarCombatLockout = 10,
+	spawnRequestCooldown = 1, -- seconds between spawn requests from one player
+}
+
 return Config

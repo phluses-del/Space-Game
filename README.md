@@ -12,9 +12,11 @@ The code lives in this repo as Luau files and syncs into Roblox Studio with [Roj
 2. In this folder, run `rokit install` to get Rojo, then `rojo plugin install` to add the Rojo plugin to Studio.
 3. Run `rojo serve`.
 4. In Studio, open a new Baseplate, click **Rojo** in the Plugins tab, then **Connect**.
-5. Press **Play**. The server removes the baseplate, builds the test system and puts you in a Fighter.
+5. Press **Play**. The server removes the baseplate and builds the test system, and you land on the main menu. **Play** opens the Hangar, where you pick a ship and **Launch**.
 
-**Controls on PC:** the mouse steers (move it away from the centre to pitch and yaw), W/S thrust, A/D strafe, Space/Ctrl up and down, Q/E roll, Shift boost, T lock the target ahead, Tab next target, G pick a subsystem to aim at, X drop the lock, R fire a missile, F toggle flight assist. In Studio, keys 1 to 6 swap you into the Scout, Fighter, Hauler, Frigate, Industrial or Carrier (a stand-in until the hangar menu lands). Gamepad and touch controls are mapped too (see `src/client/Input.lua`).
+To keep settings between Studio sessions, turn on **Game Settings > Security > Enable Studio Access to API Services**; without it settings still work but reset each session.
+
+**Controls on PC:** the mouse steers (move it away from the centre to pitch and yaw), W/S thrust, A/D strafe, Space/Ctrl up and down, Q/E roll, Shift boost, T lock the target ahead, Tab next target, G pick a subsystem to aim at, X drop the lock, R fire a missile, F toggle flight assist, P or M open the pause menu (Esc is Roblox's own menu). In Studio, keys 1 to 6 also swap you straight into the Scout, Fighter, Hauler, Frigate, Industrial or Carrier while flying. Gamepad and touch controls are mapped too (see `src/client/Input.lua`).
 
 **What's in the test system:** an asteroid field, a grey target dummy straight ahead of the spawn, a grey Frigate hulk off to the left for trying big guns, two red pirate drones with Pulse Blasters and an orange armored drone with an Autocannon. Once a lock completes, each gun fires on its own while the target is inside its arc and range. Turrets also fire on their own at the nearest ship that is locking onto you.
 
@@ -50,6 +52,11 @@ Missiles are fired with R once the lock completes; point-defense turrets shoot d
 | `src/client/Flight.lua` | Six-axis flight with flight assist on or off |
 | `src/client/Input.lua` | Keyboard and mouse, gamepad and touch controls |
 | `src/client/Hud.lua`, `Effects.lua`, `ChaseCamera.lua`, `Targeting.lua` | HUD, tracers and shield effects, camera, choosing what to lock |
+| `src/client/Menus/` | Main menu, Hangar (ship select), pause, settings, controls and destroyed screens; `init.lua` runs the flow and `Theme.lua` holds the look |
+| `src/client/ClientSettings.lua` | Applies the player's settings (sensitivity, FOV, HUD size, volume) and saves changes |
+| `src/shared/ShipCatalog.lua` | The ships listed in the Hangar; a hull appears as launchable once Config has its hull and `Player<Hull>` loadout |
+| `src/shared/Settings.lua` | The settings list, defaults and validation |
+| `src/server/PlayerSettings.lua`, `ShipPreviews.lua` | Saves settings in a DataStore; builds the Hangar's 3D ship previews |
 
 ## Contents
 

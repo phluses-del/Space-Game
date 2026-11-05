@@ -58,10 +58,16 @@ function Flight.update(dt: number, axes)
 	local canBoost = workspace:GetServerTimeNow() - lastDamaged > Config.Flight.boostDamageLockout
 	Flight.boosting = axes.boost and canBoost
 
+	-- The server sets these from the ship's engines and armor; fall back to
+	-- the hull table for ships spawned without a customized loadout.
+	local function stat(attribute, default)
+		return model:GetAttribute(attribute) or default
+	end
+
 	local boost = if Flight.boosting then Config.Flight.boostMultiplier else 1
-	local topSpeed = hull.topSpeed * speedScale * boost
-	local strafeSpeed = hull.strafeSpeed * speedScale
-	local accel = hull.accel * speedScale * boost
+	local topSpeed = stat("TopSpeed", hull.topSpeed) * speedScale * boost
+	local strafeSpeed = stat("StrafeSpeed", hull.strafeSpeed) * speedScale
+	local accel = stat("Accel", hull.accel) * speedScale * boost
 
 	-- Boost always pushes forward at full throttle.
 	local forward = if Flight.boosting then 1 else axes.forward
@@ -88,8 +94,9 @@ function Flight.update(dt: number, axes)
 	thrust.VectorVelocity = velocity
 	Flight.speed = velocity.Magnitude
 
-	local turnRate = math.rad(hull.turnRate)
-	local wantedTurn = Vector3.new(axes.pitch * turnRate, axes.yaw * turnRate, axes.roll * math.rad(hull.rollRate))
+	local turnRate = math.rad(stat("TurnRate", hull.turnRate))
+	local rollRate = math.rad(stat("RollRate", hull.rollRate))
+	local wantedTurn = Vector3.new(axes.pitch * turnRate, axes.yaw * turnRate, axes.roll * rollRate)
 	turnRates = turnRates:Lerp(wantedTurn, 1 - math.exp(-Config.Flight.angularResponse * dt))
 	-- Ship space: +X pitches the nose up, -Y yaws right, -Z rolls right.
 	turn.AngularVelocity = Vector3.new(turnRates.X, -turnRates.Y, -turnRates.Z)

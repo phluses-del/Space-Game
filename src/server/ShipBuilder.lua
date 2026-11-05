@@ -5,6 +5,10 @@
 	each weapon mount.
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Outfitting = require(ReplicatedStorage.Shared.Outfitting)
+
 local ShipBuilder = {}
 
 local function part(props)
@@ -263,9 +267,54 @@ local function mountPieces(mount)
 	end
 end
 
-function ShipBuilder.build(hullName: string, color: Color3, name: string): Model
+-- Turns a cosmetics table ({ paint, trim, glow, trail, finish } ids, see
+-- Outfitting.Cosmetics) into colours and materials, falling back to the defaults.
+local function resolveCosmetics(color: Color3?, cosmetics)
+	cosmetics = cosmetics or {}
+	local finish = Outfitting.cosmetic("finish", cosmetics.finish or "")
+	local trail = Outfitting.cosmetic("trail", cosmetics.trail or "")
+	return {
+		hull = color or Outfitting.cosmeticColor("paint", cosmetics.paint or "") or Color3.fromRGB(70, 140, 220),
+		trim = Outfitting.cosmeticColor("trim", cosmetics.trim or "") or TRIM,
+		glow = Outfitting.cosmeticColor("glow", cosmetics.glow or "") or GLOW,
+		material = if finish then Enum.Material[finish.material] else Enum.Material.SmoothPlastic,
+		trailLength = if trail then trail.length else 0,
+	}
+end
+
+-- A fading ribbon behind an engine glow part.
+local function addTrail(glowPart: BasePart, look)
+	local half = math.min(glowPart.Size.X, glowPart.Size.Y) * 0.35
+	local top = Instance.new("Attachment")
+	top.Name = "TrailTop"
+	top.Position = Vector3.new(0, half, 0)
+	top.Parent = glowPart
+	local bottom = Instance.new("Attachment")
+	bottom.Name = "TrailBottom"
+	bottom.Position = Vector3.new(0, -half, 0)
+	bottom.Parent = glowPart
+
+	local trail = Instance.new("Trail")
+	trail.Name = "EngineTrail"
+	trail.Attachment0 = top
+	trail.Attachment1 = bottom
+	trail.Lifetime = look.trailLength
+	trail.MinLength = 0.5
+	trail.FaceCamera = true
+	trail.LightEmission = 1
+	trail.Color = ColorSequence.new(look.glow)
+	trail.Transparency = NumberSequence.new(0.2, 1)
+	trail.WidthScale = NumberSequence.new(1, 0.2)
+	trail.Parent = glowPart
+end
+
+-- cosmetics is optional (shipyard paint jobs); color, if given, wins over
+-- cosmetics.paint so drones and previews keep their colours.
+function ShipBuilder.build(hullName: string, color: Color3?, name: string, cosmetics: any?): Model
 	local layout = LAYOUTS[hullName]
 	assert(layout, "No ship layout for hull " .. tostring(hullName))
+	local look = resolveCosmetics(color, cosmetics)
+	color = look.hull
 
 	local model = Instance.new("Model")
 	model.Name = name
@@ -275,6 +324,7 @@ function ShipBuilder.build(hullName: string, color: Color3, name: string): Model
 		Name = "Hull",
 		Size = layout.rootSize,
 		Color = color,
+		Material = look.material,
 		Massless = false,
 		CanCollide = true,
 		CanQuery = true,
@@ -294,8 +344,9 @@ function ShipBuilder.build(hullName: string, color: Color3, name: string): Model
 		local p = part({ ClassName = className, Size = size, CFrame = offset })
 		if kind == "hull" then
 			p.Color = color
+			p.Material = look.material
 		elseif kind == "trim" then
-			p.Color = TRIM
+			p.Color = look.trim
 		elseif kind == "glass" then
 			p.Color = GLASS
 			p.Material = Enum.Material.Glass
@@ -303,8 +354,11 @@ function ShipBuilder.build(hullName: string, color: Color3, name: string): Model
 		elseif kind == "engine" then
 			p.Color = ENGINE
 		elseif kind == "glow" then
-			p.Color = GLOW
+			p.Color = look.glow
 			p.Material = Enum.Material.Neon
+			if look.trailLength > 0 then
+				addTrail(p, look)
+			end
 		elseif kind == "gun" then
 			p.Color = GUN
 			p.Material = Enum.Material.Metal

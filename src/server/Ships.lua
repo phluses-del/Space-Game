@@ -12,6 +12,7 @@ local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Outfitting = require(ReplicatedStorage.Shared.Outfitting)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local ShipBuilder = require(script.Parent.ShipBuilder)
 
@@ -73,7 +74,8 @@ local function recomputePower(ship)
 	local draw = 0
 	for _, gun in ship.guns do
 		if gun.weapon.class == "Energy" and gun.weapon.powerDraw then
-			draw += gun.weapon.powerDraw
+			-- Higher tiers draw a little more (weapons-and-damage.md, Tiers).
+			draw += gun.weapon.powerDraw * (Outfitting.TierScale.energyDraw[gun.tier] or 1)
 		end
 	end
 
@@ -101,7 +103,16 @@ local function weaponFits(weapon, fit, mount)
 	return table.find(mountsOn, fit.slot) ~= nil and fit.slot ~= "Turret" and weapon.size == mount.kind
 end
 
--- loadout is a Config.Loadouts name or a loadout table (see Config.Loadouts).
+-- Handling stats a loadout can override (engines and module mass change them).
+local HANDLING_STATS = { "topSpeed", "strafeSpeed", "accel", "turnRate", "rollRate" }
+
+--[[
+	loadout is a Config.Loadouts name or a loadout table (see Config.Loadouts).
+	Extra fields a table may carry (Outfitting.toSpawnLoadout builds these
+	from a saved shipyard design): guns[i].mount (mount index, so empty slots
+	don't shift the rest), shieldHP (0 = no shield generator), engines as
+	{ output = n } tables, stats (handling overrides) and cosmetics.
+]]
 function Ships.spawn(loadoutOrName: any, cframe: CFrame, owner: Player?)
 	local loadout = loadoutOrName
 	local loadoutName = if type(loadoutOrName) == "string" then loadoutOrName else "Custom"
@@ -109,27 +120,38 @@ function Ships.spawn(loadoutOrName: any, cframe: CFrame, owner: Player?)
 		loadout = Config.Loadouts[loadoutOrName]
 	end
 	assert(type(loadout) == "table", "Unknown loadout " .. tostring(loadoutOrName))
-	local hull = Config.Hulls[loadout.hull]
-	assert(hull, "Unknown hull " .. tostring(loadout.hull))
+	local baseHull = Config.Hulls[loadout.hull]
+	assert(baseHull, "Unknown hull " .. tostring(loadout.hull))
 	local mounts = ShipBuilder.mounts(loadout.hull)
-	assert(#loadout.guns <= #mounts, loadoutName .. " has more guns than mounts")
 	for i, fit in loadout.guns do
 		local weapon = Config.Weapons[fit.weapon]
+		local mount = mounts[fit.mount or i]
 		assert(weapon, loadoutName .. ": unknown weapon " .. tostring(fit.weapon))
-		if not weaponFits(weapon, fit, mounts[i]) then
-			warn(string.format("%s: %s (%s) doesn't fit %s mount %d", loadoutName, fit.weapon, tostring(fit.slot), mounts[i].kind, i))
+		assert(mount, loadoutName .. " has a gun on a mount the hull doesn't have")
+		if not weaponFits(weapon, fit, mount) then
+			warn(string.format("%s: %s (%s) doesn't fit %s mount %d", loadoutName, fit.weapon, tostring(fit.slot), mount.kind, fit.mount or i))
+		end
+	end
+
+	-- ship.hull is this ship's own copy of the hull stats with the loadout's
+	-- handling applied, so Drones, Combat and the speed check all see it.
+	local hull = table.clone(baseHull)
+	for _, stat in HANDLING_STATS do
+		if loadout.stats and type(loadout.stats[stat]) == "number" then
+			hull[stat] = loadout.stats[stat]
 		end
 	end
 
 	nextId += 1
 	local displayName = loadout.displayName or hull.displayName or loadout.hull
 	local name = if owner then owner.Name else displayName .. " " .. nextId
-	local model = ShipBuilder.build(loadout.hull, loadout.color or hull.color, name)
+	local paint = loadout.color or (if loadout.cosmetics then nil else hull.color)
+	local model = ShipBuilder.build(loadout.hull, paint, name, loadout.cosmetics)
 	model:PivotTo(cframe)
 
 	local plates = loadout.armorPlates or 0
 	local maxHull = hull.hullHP + plates * Config.Defense.armorHPPerPlate[hull.size]
-	local maxShield = Config.ShieldGenerators[loadout.shield].shieldHP
+	local maxShield = loadout.shieldHP or Config.ShieldGenerators[loadout.shield].shieldHP
 
 	local ship = {
 		id = nextId,
@@ -156,22 +178,27 @@ function Ships.spawn(loadoutOrName: any, cframe: CFrame, owner: Player?)
 		attrCache = {},
 	}
 
-	ship.generator = addModule(ship, "ShieldGenerator", "ShieldGenerator")
+	-- A ship can fly without a shield generator to free reactor for other modules.
+	if maxShield > 0 then
+		ship.generator = addModule(ship, "ShieldGenerator", "ShieldGenerator")
+	end
 	addModule(ship, "Cockpit", "Cockpit")
-	for i, engineName in loadout.engines do
-		addModule(ship, "Engine", "Engine" .. i, { output = Config.Engines[engineName].output })
+	for i, engine in loadout.engines do
+		local output = if type(engine) == "table" then engine.output else Config.Engines[engine].output
+		addModule(ship, "Engine", "Engine" .. i, { output = output })
 	end
 
 	for i, fit in loadout.guns do
 		local weapon = Config.Weapons[fit.weapon]
-		local mount = mounts[i]
+		local mountIndex = fit.mount or i
+		local mount = mounts[mountIndex]
 		local gun = {
 			index = i,
 			weaponName = fit.weapon,
 			weapon = weapon,
 			slot = Config.Slots[fit.slot] or Config.Slots.Fixed,
 			tier = fit.tier or 1,
-			mount = ship.root:FindFirstChild("Gun" .. i),
+			mount = ship.root:FindFirstChild("Gun" .. mountIndex),
 			-- Turrets measure their arc from the way the dome faces; forward
 			-- guns from the nose.
 			facing = if mount.kind == "Turret" then (mount.facing or Vector3.yAxis) else nil,
@@ -200,7 +227,9 @@ function Ships.spawn(loadoutOrName: any, cframe: CFrame, owner: Player?)
 		local gun = ship.guns[gunIndex]
 		local weapon = gun.weapon
 		gun.magazine = addModule(ship, "Magazine", "Magazine" .. cell, { feeds = gun })
-		gun.ammo = weapon.ammoShots or math.floor(weapon.ammoSeconds / weapon.interval)
+		-- Kinetic tiers carry ~15% more ammo per step.
+		local ammoScale = Outfitting.TierScale.kineticAmmo[gun.tier] or 1
+		gun.ammo = math.floor((weapon.ammoShots or weapon.ammoSeconds / weapon.interval) * ammoScale)
 		gun.maxAmmo = gun.ammo
 	end
 
@@ -229,6 +258,13 @@ function Ships.spawn(loadoutOrName: any, cframe: CFrame, owner: Player?)
 	model:SetAttribute("DisplayName", if owner then owner.DisplayName else displayName)
 	model:SetAttribute("Hull", loadout.hull)
 	model:SetAttribute("HullDisplayName", hull.displayName or loadout.hull)
+	model:SetAttribute("LoadoutName", loadout.designName or displayName)
+	-- Flight reads these so engine and armor choices change how the ship flies.
+	model:SetAttribute("TopSpeed", hull.topSpeed)
+	model:SetAttribute("StrafeSpeed", hull.strafeSpeed)
+	model:SetAttribute("Accel", hull.accel)
+	model:SetAttribute("TurnRate", hull.turnRate)
+	model:SetAttribute("RollRate", hull.rollRate)
 	model:SetAttribute("IsDrone", owner == nil)
 	model:SetAttribute("GunCount", #ship.guns)
 	for _, gun in ship.guns do
@@ -388,7 +424,7 @@ local function pickModule(ship, subsystem)
 end
 
 function Ships.shieldUp(ship)
-	return ship.generator.online and ship.shieldHP > 0
+	return ship.generator ~= nil and ship.generator.online and ship.shieldHP > 0
 end
 
 --[[
@@ -455,7 +491,7 @@ end
 function Ships.update(dt)
 	local t = now()
 	for _, ship in Ships.all do
-		if ship.generator.online and ship.shieldHP < ship.maxShieldHP then
+		if ship.generator and ship.generator.online and ship.shieldHP < ship.maxShieldHP then
 			if t - ship.lastEnergyHit >= Config.Defense.shieldRechargeDelay then
 				ship.shieldHP = math.min(
 					ship.maxShieldHP,

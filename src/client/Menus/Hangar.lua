@@ -43,6 +43,11 @@ local function previewsFolder()
 	return ReplicatedStorage:FindFirstChild("ShipPreviews")
 end
 
+local function isOwned(id: string): boolean
+	local entry = ShipCatalog.get(id)
+	return ownedHulls == nil or (entry ~= nil and ownedHulls[entry.hull] == true)
+end
+
 local function canLaunch(id: string): boolean
 	local folder = previewsFolder()
 	return ShipCatalog.isAvailable(id) and folder ~= nil and folder:FindFirstChild(id) ~= nil
@@ -167,7 +172,10 @@ local function select(id: string)
 	end
 
 	setPreview(id)
-	Theme.setEnabled(launchButton, available and not launching)
+	if not launching then
+		launchButton.Text = if available and not isOwned(id) then "Not owned" else "Launch"
+	end
+	Theme.setEnabled(launchButton, available and isOwned(id) and not launching)
 	Theme.setEnabled(customizeButton, available)
 	refreshCards()
 end
@@ -222,7 +230,7 @@ local function listenForProfile()
 		if type(profile) == "table" and type(profile.hulls) == "table" then
 			ownedHulls = profile.hulls
 			if frame.Visible then
-				refreshCards()
+				select(menus.selectedShip)
 			end
 		end
 	end
@@ -245,9 +253,10 @@ end
 
 local function stopLaunching()
 	launching = false
-	launchButton.Text = "Launch"
+	local id = menus.selectedShip
+	launchButton.Text = if canLaunch(id) and not isOwned(id) then "Not owned" else "Launch"
 	if frame.Visible then
-		Theme.setEnabled(launchButton, canLaunch(menus.selectedShip))
+		Theme.setEnabled(launchButton, canLaunch(id) and isOwned(id))
 	end
 end
 
